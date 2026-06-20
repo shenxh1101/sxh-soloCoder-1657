@@ -105,7 +105,7 @@ export interface InventoryCheck {
 }
 
 export interface CostBreakdown {
-  salesActualCost: number;
+  salesCost: number;
   purchaseAmount: number;
   inventoryDiff: number;
   totalActualCost: number;
@@ -120,10 +120,10 @@ export interface GrossProfitReportItem {
   date: string;
   revenue: number;
   theoreticalCost: number;
-  actualCost: number;
-  salesActualCost: number;
+  salesCost: number;
   purchaseAmount: number;
   inventoryDiff: number;
+  actualCost: number;
   grossProfit: number;
   grossProfitRate: number;
   deviationRate: number;
@@ -247,15 +247,45 @@ export interface PeriodDateRange extends DateRange {
   displayName: string;
 }
 
-export type DrillSourceType = 'sale' | 'purchase' | 'inventory_check';
+export interface DrillDishSaleItem {
+  saleId: string;
+  saleDate: string;
+  quantity: number;
+  revenue: number;
+  theoreticalCost: number;
+  actualCost: number;
+  bomBreakdown: { ingredientId: string; ingredientName: string; quantity: number; unit: string; cost: number }[];
+}
 
-export interface DrillSourceItem {
-  type: DrillSourceType;
-  id: string;
-  date: string;
+export interface DrillIngredientConsumptionItem {
+  dishId: string;
+  dishName: string;
+  soldQuantity: number;
+  consumedQuantity: number;
+  unit: string;
+  theoreticalCost: number;
+}
+
+export interface DrillPurchaseItem {
+  purchaseId: string;
+  purchaseDate: string;
+  supplierName: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
   amount: number;
-  description: string;
-  affectedItems: string[];
+}
+
+export interface DrillInventoryItem {
+  checkId: string;
+  checkDate: string;
+  ingredientName?: string;
+  systemStock: number;
+  actualStock: number;
+  diffQuantity: number;
+  diffAmount: number;
+  diffType: 'profit' | 'loss' | 'equal';
+  unit: string;
 }
 
 export interface DrillDetail {
@@ -267,5 +297,45 @@ export interface DrillDetail {
   actualCost: number;
   deviation: number;
   deviationRate: number;
-  sourceRecords: DrillSourceItem[];
+  dishSales?: DrillDishSaleItem[];
+  dishInventories?: DrillInventoryItem[];
+  ingredientConsumptions?: DrillIngredientConsumptionItem[];
+  ingredientPurchases?: DrillPurchaseItem[];
+  ingredientInventories?: DrillInventoryItem[];
+}
+
+export interface ReconciliationData {
+  period: { start: string; end: string; days: number };
+  salesTotal: {
+    revenue: number;
+    cost: number;
+    grossProfit: number;
+    grossProfitRate: number;
+    saleCount: number;
+  };
+  grossProfitAnalysis: {
+    revenue: number;
+    theoreticalCost: number;
+    actualCost: number;
+    salesCost: number;
+    purchaseAmount: number;
+    inventoryDiff: number;
+    grossProfit: number;
+    grossProfitRate: number;
+    deviationRate: number;
+  };
+  operationTracker: {
+    revenue: number;
+    cost: number;
+    grossProfit: number;
+    grossProfitRate: number;
+    ingredientCount: number;
+    dishCount: number;
+  };
+  differences: {
+    sales_vs_gp_revenue: number;
+    sales_vs_gp_cost: number;
+    sales_vs_op_revenue: number;
+    sales_vs_op_cost: number;
+  };
 }

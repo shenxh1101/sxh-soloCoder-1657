@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   BarChart,
@@ -13,7 +13,7 @@ import {
   ResponsiveContainer,
   ComposedChart,
 } from 'recharts';
-import { TrendingUp, DollarSign, TrendingDown, BarChart3, ChevronRight, AlertCircle, ArrowLeft, AlertTriangle } from 'lucide-react';
+import { TrendingUp, DollarSign, TrendingDown, BarChart3, ChevronRight, ChevronDown, AlertCircle, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { formatMoney, formatPercent, calcGrossProfit, calcGrossProfitRate, calcDeviationRate } from '@/utils/calc';
 import { generateGrossProfitReport, generateDeviationDetail, getPeriodDateRange, generateDrillDetail } from '@/utils/report';
 import { parseQuery } from '@/utils/queryParams';
@@ -223,16 +223,24 @@ function DrillDetailModal({
   onClose: () => void;
   detail: DrillDetail | null;
 }) {
-  const [activeTab, setActiveTab] = useState<'sale' | 'purchase' | 'inventory_check'>('sale');
+  const [expandedSales, setExpandedSales] = useState<Set<string>>(new Set());
 
   if (!detail) return null;
 
-  const filteredRecords = detail.sourceRecords.filter((r) => r.type === activeTab);
+  const toggleSaleExpand = (saleId: string) => {
+    const next = new Set(expandedSales);
+    if (next.has(saleId)) {
+      next.delete(saleId);
+    } else {
+      next.add(saleId);
+    }
+    setExpandedSales(next);
+  };
 
-  const tabLabels: Record<string, string> = {
-    sale: '销售单',
-    purchase: '采购单',
-    inventory_check: '盘点单',
+  const diffTypeLabels: Record<string, string> = {
+    profit: '盘盈',
+    loss: '盘亏',
+    equal: '持平',
   };
 
   return (
@@ -280,73 +288,262 @@ function DrillDetailModal({
           </div>
         </div>
 
-        <div>
-          <div className="flex border-b border-gray-200 mb-4">
-            {(['sale', 'purchase', 'inventory_check'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 text-sm font-medium transition-colors ${
-                  activeTab === tab
-                    ? 'text-primary-600 border-b-2 border-primary-600'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {tabLabels[tab]}
-                <span className="ml-1 text-xs text-gray-400">
-                  ({detail.sourceRecords.filter((r) => r.type === tab).length})
-                </span>
-              </button>
-            ))}
-          </div>
+        {detail.targetType === 'dish' && (
+          <>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">销售明细</h4>
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 w-10"></th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">日期</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单据号</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">销售数量</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">收入</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">理论成本</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">实际成本</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {detail.dishSales?.map((sale, idx) => (
+                      <Fragment key={idx}>
+                        <tr className="hover:bg-gray-50 cursor-pointer" onClick={() => toggleSaleExpand(sale.saleId)}>
+                          <td className="px-4 py-2">
+                            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${expandedSales.has(sale.saleId) ? 'rotate-180' : ''}`} />
+                          </td>
+                          <td className="px-4 py-2 text-gray-700">{sale.saleDate}</td>
+                          <td className="px-4 py-2 text-gray-500 font-mono text-xs">{sale.saleId}</td>
+                          <td className="px-4 py-2 text-right text-gray-700">{sale.quantity}</td>
+                          <td className="px-4 py-2 text-right text-gray-700">{formatMoney(sale.revenue)}</td>
+                          <td className="px-4 py-2 text-right text-gray-500">{formatMoney(sale.theoreticalCost)}</td>
+                          <td className="px-4 py-2 text-right text-warning-600">{formatMoney(sale.actualCost)}</td>
+                        </tr>
+                        {expandedSales.has(sale.saleId) && (
+                          <tr className="bg-gray-50">
+                            <td colSpan={7} className="px-4 py-3">
+                              <div className="pl-8">
+                                <p className="text-xs font-medium text-gray-500 mb-2">BOM 食材成本拆分</p>
+                                <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+                                  <table className="w-full text-xs">
+                                    <thead className="bg-gray-50 border-b border-gray-200">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left font-medium text-gray-500">食材名称</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500">用量</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500">成本</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                      {sale.bomBreakdown.map((bom, bomIdx) => (
+                                        <tr key={bomIdx}>
+                                          <td className="px-3 py-2 text-gray-700">{bom.ingredientName}</td>
+                                          <td className="px-3 py-2 text-right text-gray-500">{bom.quantity}{bom.unit}</td>
+                                          <td className="px-3 py-2 text-right text-gray-700">{formatMoney(bom.cost)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    ))}
+                    {(!detail.dishSales || detail.dishSales.length === 0) && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                          暂无销售记录
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
-          <div className="overflow-x-auto border border-gray-200 rounded-lg">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">日期</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单据号</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">说明</th>
-                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">金额</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">影响项</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filteredRecords.map((record, idx) => (
-                  <tr key={idx} className="hover:bg-gray-50">
-                    <td className="px-4 py-2 text-gray-700">{record.date}</td>
-                    <td className="px-4 py-2 text-gray-500 font-mono text-xs">{record.id}</td>
-                    <td className="px-4 py-2 text-gray-700">{record.description}</td>
-                    <td className={`px-4 py-2 text-right font-medium ${
-                      record.amount > 0 ? 'text-danger-600' : record.amount < 0 ? 'text-success-600' : 'text-gray-500'
-                    }`}>
-                      {record.amount > 0 ? '+' : ''}{formatMoney(record.amount)}
-                    </td>
-                    <td className="px-4 py-2">
-                      <div className="flex flex-wrap gap-1">
-                        {record.affectedItems.map((item, i) => (
-                          <span
-                            key={i}
-                            className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded"
-                          >
-                            {item}
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                相关盘点
+                <span className="ml-2 text-xs font-normal text-gray-400">
+                  （涉及该菜品BOM食材的盘点）
+                </span>
+              </h4>
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">日期</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">盘点单</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">食材</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">系统库存</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">实盘</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">差异数量</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">差异金额</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {detail.dishInventories?.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700">{item.checkDate}</td>
+                        <td className="px-4 py-2 text-gray-500 font-mono text-xs">{item.checkId}</td>
+                        <td className="px-4 py-2 text-gray-700">{item.ingredientName || '-'}</td>
+                        <td className="px-4 py-2 text-right text-gray-500">{item.systemStock}{item.unit}</td>
+                        <td className="px-4 py-2 text-right text-gray-700">{item.actualStock}{item.unit}</td>
+                        <td className={`px-4 py-2 text-right font-medium ${
+                          item.diffType === 'loss' ? 'text-danger-600' : item.diffType === 'profit' ? 'text-success-600' : 'text-gray-500'
+                        }`}>
+                          {item.diffQuantity > 0 ? '+' : ''}{item.diffQuantity}{item.unit}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-medium ${
+                          item.diffAmount > 0 ? 'text-danger-600' : item.diffAmount < 0 ? 'text-success-600' : 'text-gray-500'
+                        }`}>
+                          {item.diffAmount > 0 ? '+' : ''}{formatMoney(item.diffAmount)}
+                        </td>
+                      </tr>
+                    ))}
+                    {(!detail.dishInventories || detail.dishInventories.length === 0) && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                          暂无相关盘点记录
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+
+        {detail.targetType === 'ingredient' && (
+          <>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">菜品消耗分布</h4>
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">菜品名称</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">销售份数</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">消耗数量</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">理论成本</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {detail.ingredientConsumptions?.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700">{item.dishName}</td>
+                        <td className="px-4 py-2 text-right text-gray-500">{item.soldQuantity}份</td>
+                        <td className="px-4 py-2 text-right text-gray-700">{item.consumedQuantity}{item.unit}</td>
+                        <td className="px-4 py-2 text-right text-warning-600">{formatMoney(item.theoreticalCost)}</td>
+                      </tr>
+                    ))}
+                    {(!detail.ingredientConsumptions || detail.ingredientConsumptions.length === 0) && (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
+                          暂无消耗记录
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">采购明细</h4>
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">日期</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">采购单</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">供应商</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">数量</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">单价</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">金额</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {detail.ingredientPurchases?.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700">{item.purchaseDate}</td>
+                        <td className="px-4 py-2 text-gray-500 font-mono text-xs">{item.purchaseId}</td>
+                        <td className="px-4 py-2 text-gray-700">{item.supplierName}</td>
+                        <td className="px-4 py-2 text-right text-gray-700">{item.quantity}{item.unit}</td>
+                        <td className="px-4 py-2 text-right text-gray-500">{formatMoney(item.unitPrice)}</td>
+                        <td className="px-4 py-2 text-right text-warning-600 font-medium">{formatMoney(item.amount)}</td>
+                      </tr>
+                    ))}
+                    {(!detail.ingredientPurchases || detail.ingredientPurchases.length === 0) && (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                          暂无采购记录
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">盘点明细</h4>
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">日期</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">盘点单</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">系统库存</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">实盘</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">差异数量</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">差异金额</th>
+                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">类型</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {detail.ingredientInventories?.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700">{item.checkDate}</td>
+                        <td className="px-4 py-2 text-gray-500 font-mono text-xs">{item.checkId}</td>
+                        <td className="px-4 py-2 text-right text-gray-500">{item.systemStock}{item.unit}</td>
+                        <td className="px-4 py-2 text-right text-gray-700">{item.actualStock}{item.unit}</td>
+                        <td className={`px-4 py-2 text-right font-medium ${
+                          item.diffType === 'loss' ? 'text-danger-600' : item.diffType === 'profit' ? 'text-success-600' : 'text-gray-500'
+                        }`}>
+                          {item.diffQuantity > 0 ? '+' : ''}{item.diffQuantity}{item.unit}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-medium ${
+                          item.diffAmount > 0 ? 'text-danger-600' : item.diffAmount < 0 ? 'text-success-600' : 'text-gray-500'
+                        }`}>
+                          {item.diffAmount > 0 ? '+' : ''}{formatMoney(item.diffAmount)}
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <span className={`px-2 py-0.5 text-xs rounded-full ${
+                            item.diffType === 'profit' ? 'bg-success-100 text-success-700' :
+                            item.diffType === 'loss' ? 'bg-danger-100 text-danger-700' :
+                            'bg-gray-100 text-gray-700'
+                          }`}>
+                            {diffTypeLabels[item.diffType]}
                           </span>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {filteredRecords.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
-                      暂无相关{tabLabels[activeTab]}记录
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {(!detail.ingredientInventories || detail.ingredientInventories.length === 0) && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                          暂无盘点记录
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -405,7 +602,7 @@ export default function GrossProfit() {
   const totalRevenue = data.reduce((sum, item) => sum + item.revenue, 0);
   const totalTheoreticalCost = data.reduce((sum, item) => sum + item.theoreticalCost, 0);
   const totalActualCost = data.reduce((sum, item) => sum + item.actualCost, 0);
-  const totalSalesActualCost = data.reduce((sum, item) => sum + item.salesActualCost, 0);
+  const totalSalesCost = data.reduce((sum, item) => sum + item.salesCost, 0);
   const totalPurchaseAmount = data.reduce((sum, item) => sum + item.purchaseAmount, 0);
   const totalInventoryDiff = data.reduce((sum, item) => sum + item.inventoryDiff, 0);
   const totalGrossProfit = calcGrossProfit(totalRevenue, totalActualCost);
@@ -470,7 +667,7 @@ export default function GrossProfit() {
           value={formatMoney(totalActualCost)}
           icon={<TrendingDown className="w-5 h-5" />}
           color="bg-warning-500"
-          subValue={`销售 ${formatMoney(totalSalesActualCost)} + 采购 ${formatMoney(totalPurchaseAmount)} + 盘差 ${formatMoney(totalInventoryDiff)}`}
+          subValue={`销售 ${formatMoney(totalSalesCost)} + 盘差 ${formatMoney(totalInventoryDiff)} = 实际 ${formatMoney(totalActualCost)}`}
         />
         <SummaryCard
           title="毛利额"
@@ -626,7 +823,7 @@ export default function GrossProfit() {
                     {formatMoney(item.theoreticalCost)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
-                    {formatMoney(item.salesActualCost)}
+                    {formatMoney(item.salesCost)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
                     {formatMoney(item.purchaseAmount)}

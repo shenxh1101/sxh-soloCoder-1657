@@ -15,11 +15,14 @@ import type {
   AlertItem,
   CostBreakdown,
   DrillDetail,
-  DrillSourceItem,
-  DrillSourceType,
+  DrillDishSaleItem,
+  DrillIngredientConsumptionItem,
+  DrillPurchaseItem,
+  DrillInventoryItem,
   ReportDataSources,
   DateRange,
   PeriodDateRange,
+  ReconciliationData,
 } from '@/types';
 import {
   calcGrossProfit,
@@ -113,7 +116,7 @@ export function calculateCostBreakdown(
 
   const revenue = filteredSales.reduce((sum, s) => sum + s.totalAmount, 0);
 
-  const salesActualCost = filteredSales.reduce((sum, sale) => {
+  const salesCost = filteredSales.reduce((sum, sale) => {
     if (typeof sale.totalCost === 'number' && sale.totalCost > 0) {
       return sum + sale.totalCost;
     }
@@ -126,7 +129,7 @@ export function calculateCostBreakdown(
   const lossAmount = filteredChecks.reduce((sum, c) => sum + (c.lossAmount || 0), 0);
   const inventoryDiff = lossAmount - profitAmount;
 
-  const totalActualCost = salesActualCost + inventoryDiff;
+  const totalActualCost = salesCost + inventoryDiff;
 
   const theoreticalCost = filteredSales.reduce((sum, sale) => {
     return sum + sale.items.reduce((itemSum, saleItem) => {
@@ -144,7 +147,7 @@ export function calculateCostBreakdown(
   const checkCount = filteredChecks.length;
 
   return {
-    salesActualCost: Number(salesActualCost.toFixed(2)),
+    salesCost: Number(salesCost.toFixed(2)),
     purchaseAmount: Number(purchaseAmount.toFixed(2)),
     inventoryDiff: Number(inventoryDiff.toFixed(2)),
     totalActualCost: Number(totalActualCost.toFixed(2)),
@@ -200,7 +203,7 @@ export function generateGrossProfitReport(
       }, 0);
     }, 0);
 
-    const salesActualCost = periodSales.reduce((sum, sale) => {
+    const salesCost = periodSales.reduce((sum, sale) => {
       if (typeof sale.totalCost === 'number' && sale.totalCost > 0) {
         return sum + sale.totalCost;
       }
@@ -213,7 +216,7 @@ export function generateGrossProfitReport(
     const lossAmount = periodChecks.reduce((sum, c) => sum + (c.lossAmount || 0), 0);
     const inventoryDiff = lossAmount - profitAmount;
 
-    const actualCost = salesActualCost + inventoryDiff;
+    const actualCost = salesCost + inventoryDiff;
 
     const grossProfit = calcGrossProfit(revenue, actualCost);
     const grossProfitRate = calcGrossProfitRate(revenue, actualCost);
@@ -223,7 +226,7 @@ export function generateGrossProfitReport(
       date: periodKey,
       revenue: Number(revenue.toFixed(2)),
       theoreticalCost: Number(theoreticalCost.toFixed(2)),
-      salesActualCost: Number(salesActualCost.toFixed(2)),
+      salesCost: Number(salesCost.toFixed(2)),
       purchaseAmount: Number(purchaseAmount.toFixed(2)),
       inventoryDiff: Number(inventoryDiff.toFixed(2)),
       actualCost: Number(actualCost.toFixed(2)),
@@ -881,11 +884,6 @@ export function generateDrillDetail(
   const { sales, purchases, inventoryChecks, ingredients, dishes } = sources;
   const { start, end } = periodDateRange;
 
-  let targetName = '';
-  let theoreticalCost = 0;
-  let actualCost = 0;
-  const sourceRecords: DrillSourceItem[] = [];
-
   const periodSales = sales.filter((s) => isInRange(s.saleDate, start, end));
   const periodPurchases = purchases.filter((p) => isInRange(p.purchaseDate, start, end));
   const periodChecks = inventoryChecks.filter((c) => isInRange(c.checkDate, start, end));
@@ -902,175 +900,296 @@ export function generateDrillDetail(
         actualCost: 0,
         deviation: 0,
         deviationRate: 0,
-        sourceRecords: [],
+        dishSales: [],
       };
     }
-    targetName = dish.name;
 
-    const ingredientIds = dish.bomItems.map((b) => b.ingredientId);
+    const dishSales: DrillDishSaleItem[] = [];
+    let totalTheoreticalCost = 0;
+    let totalActualCost = 0;
 
     periodSales.forEach((sale) => {
       const saleItem = sale.items.find((item) => item.dishId === targetId);
       if (!saleItem) return;
 
       const dishTheoreticalCost = calcDishTheoreticalCost(dish, ingredients);
-      theoreticalCost += dishTheoreticalCost * saleItem.quantity;
-      actualCost += saleItem.cost;
+      const theoreticalCost = Number((dishTheoreticalCost * saleItem.quantity).toFixed(2));
+      const actualCost = Number(saleItem.cost.toFixed(2));
 
-      sourceRecords.push({
-        type: 'sale',
-        id: sale.id,
-        date: sale.saleDate,
-        amount: saleItem.amount,
-        description: `销售 ${saleItem.quantity} 份「${dish.name}」`,
-        affectedItems: [dish.name],
+      totalTheoreticalCost += theoreticalCost;
+      totalActualCost += actualCost;
+
+      const bomBreakdown = dish.bomItems.map((bomItem) => {
+        const ingredient = ingredients.find((i) => i.id === bomItem.ingredientId);
+        const quantity = Number((bomItem.dosage * saleItem.quantity).toFixed(4));
+        const cost = Number((quantity * (ingredient?.costPrice || 0)).toFixed(2));
+        return {
+          ingredientId: bomItem.ingredientId,
+          ingredientName: bomItem.ingredientName,
+          quantity,
+          unit: bomItem.unit,
+          cost,
+        };
+      });
+
+      dishSales.push({
+        saleId: sale.id,
+        saleDate: sale.saleDate,
+        quantity: saleItem.quantity,
+        revenue: Number(saleItem.amount.toFixed(2)),
+        theoreticalCost,
+        actualCost,
+        bomBreakdown,
       });
     });
 
-    periodPurchases.forEach((purchase) => {
-      const affectedItems: string[] = [];
-      let totalAmount = 0;
-      purchase.items.forEach((item) => {
-        if (ingredientIds.includes(item.ingredientId)) {
-          affectedItems.push(item.ingredientName);
-          totalAmount += item.amount;
-        }
-      });
-      if (affectedItems.length > 0) {
-        sourceRecords.push({
-          type: 'purchase',
-          id: purchase.id,
-          date: purchase.purchaseDate,
-          amount: totalAmount,
-          description: `采购 ${affectedItems.length} 种相关食材`,
-          affectedItems,
-        });
-      }
-    });
-
+    const ingredientIds = dish.bomItems.map((b) => b.ingredientId);
+    const dishInventories: DrillInventoryItem[] = [];
     periodChecks.forEach((check) => {
       if (check.status !== 'completed') return;
-      const affectedItems: string[] = [];
-      let totalDiffAmount = 0;
-      check.items.forEach((item) => {
-        if (ingredientIds.includes(item.ingredientId)) {
-          affectedItems.push(item.ingredientName);
-          totalDiffAmount += item.diffAmount;
+      check.items.forEach((checkItem) => {
+        if (ingredientIds.includes(checkItem.ingredientId)) {
+          const ingredient = ingredients.find((i) => i.id === checkItem.ingredientId);
+          dishInventories.push({
+            checkId: check.id,
+            checkDate: check.checkDate,
+            ingredientName: checkItem.ingredientName || ingredient?.name,
+            systemStock: Number(checkItem.systemStock.toFixed(4)),
+            actualStock: Number(checkItem.actualStock.toFixed(4)),
+            diffQuantity: Number(checkItem.diffQuantity.toFixed(4)),
+            diffAmount: Number(checkItem.diffAmount.toFixed(2)),
+            diffType: checkItem.diffType,
+            unit: ingredient?.unit || checkItem.unit,
+          });
         }
       });
-      if (affectedItems.length > 0) {
-        sourceRecords.push({
-          type: 'inventory_check',
-          id: check.id,
-          date: check.checkDate,
-          amount: totalDiffAmount,
-          description: `盘点差异涉及 ${affectedItems.length} 种相关食材`,
-          affectedItems,
-        });
-      }
-    });
-  } else {
-    const ingredient = ingredients.find((i) => i.id === targetId);
-    if (!ingredient) {
-      return {
-        targetId,
-        targetName: '未知食材',
-        targetType,
-        periodDateRange,
-        theoreticalCost: 0,
-        actualCost: 0,
-        deviation: 0,
-        deviationRate: 0,
-        sourceRecords: [],
-      };
-    }
-    targetName = ingredient.name;
-
-    let theoreticalUsage = 0;
-    let actualUsage = 0;
-
-    periodSales.forEach((sale) => {
-      const affectedItems: string[] = [];
-      let saleAmount = 0;
-      sale.items.forEach((saleItem) => {
-        const dish = dishes.find((d) => d.id === saleItem.dishId);
-        if (!dish) return;
-        const bomItem = dish.bomItems.find((b) => b.ingredientId === targetId);
-        if (!bomItem) return;
-
-        const usage = bomItem.dosage * saleItem.quantity;
-        theoreticalUsage += usage;
-        actualUsage += usage;
-        affectedItems.push(dish.name);
-        saleAmount += saleItem.amount;
-
-        const dishTheoreticalCost = calcDishTheoreticalCost(dish, ingredients);
-        const ingredientCostRatio = dishTheoreticalCost > 0
-          ? (bomItem.dosage * ingredient.costPrice) / dishTheoreticalCost
-          : 0;
-        theoreticalCost += dishTheoreticalCost * saleItem.quantity * ingredientCostRatio;
-        actualCost += saleItem.cost * ingredientCostRatio;
-      });
-
-      if (affectedItems.length > 0) {
-        sourceRecords.push({
-          type: 'sale',
-          id: sale.id,
-          date: sale.saleDate,
-          amount: saleAmount,
-          description: `销售涉及「${ingredient.name}」的菜品`,
-          affectedItems,
-        });
-      }
     });
 
-    periodPurchases.forEach((purchase) => {
-      const purchaseItem = purchase.items.find((item) => item.ingredientId === targetId);
-      if (!purchaseItem) return;
+    totalTheoreticalCost = Number(totalTheoreticalCost.toFixed(2));
+    totalActualCost = Number(totalActualCost.toFixed(2));
+    const deviation = Number((totalActualCost - totalTheoreticalCost).toFixed(2));
+    const deviationRate = Number(calcDeviationRate(totalTheoreticalCost, totalActualCost));
 
-      sourceRecords.push({
-        type: 'purchase',
-        id: purchase.id,
-        date: purchase.purchaseDate,
-        amount: purchaseItem.amount,
-        description: `采购 ${purchaseItem.quantity}${ingredient.unit}「${ingredient.name}」`,
-        affectedItems: [ingredient.name],
-      });
-    });
-
-    periodChecks.forEach((check) => {
-      if (check.status !== 'completed') return;
-      const checkItem = check.items.find((item) => item.ingredientId === targetId);
-      if (!checkItem) return;
-
-      actualUsage -= checkItem.diffQuantity;
-
-      sourceRecords.push({
-        type: 'inventory_check',
-        id: check.id,
-        date: check.checkDate,
-        amount: checkItem.diffAmount,
-        description: `盘点「${ingredient.name}」`,
-        affectedItems: [ingredient.name],
-      });
-    });
-
-    theoreticalCost = Number((theoreticalUsage * ingredient.costPrice).toFixed(2));
-    actualCost = Number((actualUsage * ingredient.costPrice).toFixed(2));
+    return {
+      targetId,
+      targetName: dish.name,
+      targetType,
+      periodDateRange,
+      theoreticalCost: totalTheoreticalCost,
+      actualCost: totalActualCost,
+      deviation,
+      deviationRate,
+      dishSales,
+      dishInventories,
+    };
   }
 
-  const deviation = Number((actualCost - theoreticalCost).toFixed(2));
-  const deviationRate = Number(calcDeviationRate(theoreticalCost, actualCost));
+  const ingredient = ingredients.find((i) => i.id === targetId);
+  if (!ingredient) {
+    return {
+      targetId,
+      targetName: '未知食材',
+      targetType,
+      periodDateRange,
+      theoreticalCost: 0,
+      actualCost: 0,
+      deviation: 0,
+      deviationRate: 0,
+      ingredientConsumptions: [],
+      ingredientPurchases: [],
+      ingredientInventories: [],
+    };
+  }
+
+  const consumptionMap = new Map<string, {
+    dishId: string;
+    dishName: string;
+    soldQuantity: number;
+    consumedQuantity: number;
+    theoreticalCost: number;
+  }>();
+
+  let totalTheoreticalCost = 0;
+
+  periodSales.forEach((sale) => {
+    sale.items.forEach((saleItem) => {
+      const dish = dishes.find((d) => d.id === saleItem.dishId);
+      if (!dish) return;
+      const bomItem = dish.bomItems.find((b) => b.ingredientId === targetId);
+      if (!bomItem) return;
+
+      const consumedQuantity = bomItem.dosage * saleItem.quantity;
+      const theoreticalCost = Number((consumedQuantity * ingredient.costPrice).toFixed(2));
+
+      if (!consumptionMap.has(dish.id)) {
+        consumptionMap.set(dish.id, {
+          dishId: dish.id,
+          dishName: dish.name,
+          soldQuantity: 0,
+          consumedQuantity: 0,
+          theoreticalCost: 0,
+        });
+      }
+
+      const entry = consumptionMap.get(dish.id)!;
+      entry.soldQuantity += saleItem.quantity;
+      entry.consumedQuantity += consumedQuantity;
+      entry.theoreticalCost += theoreticalCost;
+
+      totalTheoreticalCost += theoreticalCost;
+    });
+  });
+
+  const ingredientConsumptions: DrillIngredientConsumptionItem[] = Array.from(
+    consumptionMap.values()
+  ).map((item) => ({
+    ...item,
+    consumedQuantity: Number(item.consumedQuantity.toFixed(4)),
+    theoreticalCost: Number(item.theoreticalCost.toFixed(2)),
+    unit: ingredient.unit,
+  }));
+
+  const ingredientPurchases: DrillPurchaseItem[] = [];
+  periodPurchases.forEach((purchase) => {
+    const purchaseItem = purchase.items.find((item) => item.ingredientId === targetId);
+    if (!purchaseItem) return;
+    ingredientPurchases.push({
+      purchaseId: purchase.id,
+      purchaseDate: purchase.purchaseDate,
+      supplierName: purchase.supplierName,
+      quantity: Number(purchaseItem.quantity.toFixed(4)),
+      unit: ingredient.unit,
+      unitPrice: Number(purchaseItem.unitPrice.toFixed(2)),
+      amount: Number(purchaseItem.amount.toFixed(2)),
+    });
+  });
+
+  const ingredientInventories: DrillInventoryItem[] = [];
+  periodChecks.forEach((check) => {
+    if (check.status !== 'completed') return;
+    const checkItem = check.items.find((item) => item.ingredientId === targetId);
+    if (!checkItem) return;
+    ingredientInventories.push({
+      checkId: check.id,
+      checkDate: check.checkDate,
+      ingredientName: checkItem.ingredientName || ingredient.name,
+      systemStock: Number(checkItem.systemStock.toFixed(4)),
+      actualStock: Number(checkItem.actualStock.toFixed(4)),
+      diffQuantity: Number(checkItem.diffQuantity.toFixed(4)),
+      diffAmount: Number(checkItem.diffAmount.toFixed(2)),
+      diffType: checkItem.diffType,
+      unit: ingredient.unit,
+    });
+  });
+
+  const totalDiffAmount = ingredientInventories.reduce((sum, item) => sum + item.diffAmount, 0);
+  const totalActualCost = Number((totalTheoreticalCost + totalDiffAmount).toFixed(2));
+  const deviation = Number((totalActualCost - totalTheoreticalCost).toFixed(2));
+  const deviationRate = Number(calcDeviationRate(totalTheoreticalCost, totalActualCost));
 
   return {
     targetId,
-    targetName,
+    targetName: ingredient.name,
     targetType,
     periodDateRange,
-    theoreticalCost: Number(theoreticalCost.toFixed(2)),
-    actualCost: Number(actualCost.toFixed(2)),
+    theoreticalCost: Number(totalTheoreticalCost.toFixed(2)),
+    actualCost: totalActualCost,
     deviation,
     deviationRate,
-    sourceRecords,
+    ingredientConsumptions,
+    ingredientPurchases,
+    ingredientInventories,
+  };
+}
+
+export function generateReconciliationData(
+  sources: ReportDataSources,
+  days: number
+): ReconciliationData {
+  const { sales, ingredients, dishes } = sources;
+  const today = dayjs();
+  const startDate = today.subtract(days - 1, 'day');
+  const start = startDate.format('YYYY-MM-DD');
+  const end = today.format('YYYY-MM-DD');
+
+  const dateRange = { start, end };
+  const filteredSales = getDataByDateRange(sales, 'saleDate', start, end);
+
+  const salesRevenue = filteredSales.reduce((sum, s) => sum + s.totalAmount, 0);
+  const salesCost = filteredSales.reduce((sum, s) => sum + s.totalCost, 0);
+  const saleCount = filteredSales.length;
+
+  const costBreakdown = calculateCostBreakdown(sources, dateRange);
+
+  const opRevenue = filteredSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+  const opCost = filteredSales.reduce((sum, sale) => {
+    return sum + sale.items.reduce((itemSum, saleItem) => {
+      const dish = dishes.find((d) => d.id === saleItem.dishId);
+      if (dish) {
+        const dishCost = calcDishTheoreticalCost(dish, ingredients);
+        return itemSum + dishCost * saleItem.quantity;
+      }
+      return itemSum;
+    }, 0);
+  }, 0);
+
+  const usedIngredientIds = new Set<string>();
+  const usedDishIds = new Set<string>();
+  filteredSales.forEach((sale) => {
+    sale.items.forEach((saleItem) => {
+      usedDishIds.add(saleItem.dishId);
+      const dish = dishes.find((d) => d.id === saleItem.dishId);
+      if (dish) {
+        dish.bomItems.forEach((bomItem) => {
+          usedIngredientIds.add(bomItem.ingredientId);
+        });
+      }
+    });
+  });
+
+  const salesGrossProfit = calcGrossProfit(salesRevenue, salesCost);
+  const salesGrossProfitRate = calcGrossProfitRate(salesRevenue, salesCost);
+
+  const gpGrossProfit = calcGrossProfit(costBreakdown.revenue, costBreakdown.totalActualCost);
+  const gpGrossProfitRate = calcGrossProfitRate(costBreakdown.revenue, costBreakdown.totalActualCost);
+  const gpDeviationRate = calcDeviationRate(costBreakdown.theoreticalCost, costBreakdown.totalActualCost);
+
+  const opGrossProfit = calcGrossProfit(opRevenue, opCost);
+  const opGrossProfitRate = calcGrossProfitRate(opRevenue, opCost);
+
+  return {
+    period: { start, end, days },
+    salesTotal: {
+      revenue: Number(salesRevenue.toFixed(2)),
+      cost: Number(salesCost.toFixed(2)),
+      grossProfit: salesGrossProfit,
+      grossProfitRate: salesGrossProfitRate,
+      saleCount,
+    },
+    grossProfitAnalysis: {
+      revenue: costBreakdown.revenue,
+      theoreticalCost: costBreakdown.theoreticalCost,
+      actualCost: costBreakdown.totalActualCost,
+      salesCost: costBreakdown.salesCost,
+      purchaseAmount: costBreakdown.purchaseAmount,
+      inventoryDiff: costBreakdown.inventoryDiff,
+      grossProfit: gpGrossProfit,
+      grossProfitRate: gpGrossProfitRate,
+      deviationRate: gpDeviationRate,
+    },
+    operationTracker: {
+      revenue: Number(opRevenue.toFixed(2)),
+      cost: Number(opCost.toFixed(2)),
+      grossProfit: opGrossProfit,
+      grossProfitRate: opGrossProfitRate,
+      ingredientCount: usedIngredientIds.size,
+      dishCount: usedDishIds.size,
+    },
+    differences: {
+      sales_vs_gp_revenue: Number((salesRevenue - costBreakdown.revenue).toFixed(2)),
+      sales_vs_gp_cost: Number((salesCost - costBreakdown.totalActualCost).toFixed(2)),
+      sales_vs_op_revenue: Number((salesRevenue - opRevenue).toFixed(2)),
+      sales_vs_op_cost: Number((salesCost - opCost).toFixed(2)),
+    },
   };
 }
