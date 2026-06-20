@@ -104,11 +104,26 @@ export interface InventoryCheck {
   createTime: string;
 }
 
+export interface CostBreakdown {
+  salesActualCost: number;
+  purchaseAmount: number;
+  inventoryDiff: number;
+  totalActualCost: number;
+  theoreticalCost: number;
+  revenue: number;
+  saleCount: number;
+  purchaseCount: number;
+  checkCount: number;
+}
+
 export interface GrossProfitReportItem {
   date: string;
   revenue: number;
   theoreticalCost: number;
   actualCost: number;
+  salesActualCost: number;
+  purchaseAmount: number;
+  inventoryDiff: number;
   grossProfit: number;
   grossProfitRate: number;
   deviationRate: number;
@@ -149,6 +164,7 @@ export interface DeviationIngredientItem {
 
 export interface DeviationDetail {
   date: string;
+  periodDateRange: { start: string; end: string; displayName: string };
   dishes: DeviationDishItem[];
   ingredients: DeviationIngredientItem[];
 }
@@ -211,4 +227,45 @@ export interface AlertItem {
   level: 'warning' | 'danger';
   targetPath: string;
   targetLabel: string;
+  queryParams?: Record<string, any>;
+}
+
+export interface ReportDataSources {
+  sales: Sale[];
+  purchases: Purchase[];
+  inventoryChecks: InventoryCheck[];
+  ingredients: Ingredient[];
+  dishes: Dish[];
+}
+
+export interface DateRange {
+  start: string;
+  end: string;
+}
+
+export interface PeriodDateRange extends DateRange {
+  displayName: string;
+}
+
+export type DrillSourceType = 'sale' | 'purchase' | 'inventory_check';
+
+export interface DrillSourceItem {
+  type: DrillSourceType;
+  id: string;
+  date: string;
+  amount: number;
+  description: string;
+  affectedItems: string[];
+}
+
+export interface DrillDetail {
+  targetId: string;
+  targetName: string;
+  targetType: 'dish' | 'ingredient';
+  periodDateRange: { start: string; end: string; displayName: string };
+  theoreticalCost: number;
+  actualCost: number;
+  deviation: number;
+  deviationRate: number;
+  sourceRecords: DrillSourceItem[];
 }

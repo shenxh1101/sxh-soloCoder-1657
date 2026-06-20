@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   BarChart,
   Bar,
@@ -12,18 +13,20 @@ import {
   ResponsiveContainer,
   ComposedChart,
 } from 'recharts';
-import { TrendingUp, DollarSign, TrendingDown, BarChart3, ChevronRight, AlertCircle } from 'lucide-react';
+import { TrendingUp, DollarSign, TrendingDown, BarChart3, ChevronRight, AlertCircle, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { formatMoney, formatPercent, calcGrossProfit, calcGrossProfitRate, calcDeviationRate } from '@/utils/calc';
-import { generateGrossProfitReport, generateDeviationDetail, getPeriodDateRange } from '@/utils/report';
+import { generateGrossProfitReport, generateDeviationDetail, getPeriodDateRange, generateDrillDetail } from '@/utils/report';
+import { parseQuery } from '@/utils/queryParams';
 import { useSaleStore } from '@/store/useSaleStore';
 import { usePurchaseStore } from '@/store/usePurchaseStore';
 import { useInventoryStore } from '@/store/useInventoryStore';
 import { useIngredientStore } from '@/store/useIngredientStore';
 import { useDishStore } from '@/store/useDishStore';
+import { cn } from '@/lib/utils';
 
 import Modal from '@/components/Modal';
 import Button from '@/components/common/Button';
-import type { GrossProfitReportItem, DeviationDetail } from '@/types';
+import type { GrossProfitReportItem, DeviationDetail, DrillDetail } from '@/types';
 
 type TimeDimension = 'day' | 'week' | 'month';
 
@@ -56,10 +59,12 @@ function DeviationDetailModal({
   isOpen,
   onClose,
   detail,
+  onDrill,
 }: {
   isOpen: boolean;
   onClose: () => void;
   detail: DeviationDetail | null;
+  onDrill: (targetId: string, targetType: 'dish' | 'ingredient') => void;
 }) {
   if (!detail) return null;
 
@@ -85,6 +90,7 @@ function DeviationDetailModal({
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">实际成本</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">偏差金额</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">偏差率</th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -100,11 +106,23 @@ function DeviationDetailModal({
                     <td className={`px-4 py-2 text-right font-medium ${dish.deviationRate > 5 ? 'text-danger-600' : 'text-warning-600'}`}>
                       {dish.deviationRate > 0 ? '+' : ''}{formatPercent(dish.deviationRate)}
                     </td>
+                    <td className="px-4 py-2 text-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDrill(dish.dishId, 'dish');
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded transition-colors"
+                      >
+                        钻取
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {detail.dishes.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
                       暂无数据
                     </td>
                   </tr>
@@ -126,6 +144,7 @@ function DeviationDetailModal({
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">偏差数量</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">偏差金额</th>
                   <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">原因分析</th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -150,11 +169,23 @@ function DeviationDetailModal({
                         {reasonLabels[ing.reason]}
                       </span>
                     </td>
+                    <td className="px-4 py-2 text-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDrill(ing.ingredientId, 'ingredient');
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded transition-colors"
+                      >
+                        钻取
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {detail.ingredients.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
                       暂无数据
                     </td>
                   </tr>
@@ -183,10 +214,166 @@ function DeviationDetailModal({
   );
 }
 
+function DrillDetailModal({
+  isOpen,
+  onClose,
+  detail,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  detail: DrillDetail | null;
+}) {
+  const [activeTab, setActiveTab] = useState<'sale' | 'purchase' | 'inventory_check'>('sale');
+
+  if (!detail) return null;
+
+  const filteredRecords = detail.sourceRecords.filter((r) => r.type === activeTab);
+
+  const tabLabels: Record<string, string> = {
+    sale: '销售单',
+    purchase: '采购单',
+    inventory_check: '盘点单',
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={`钻取详情 - ${detail.targetName}`} size="xl">
+      <div className="space-y-6">
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700">{detail.targetName}</h4>
+              <p className="text-xs text-gray-500 mt-1">
+                周期：{detail.periodDateRange.displayName}（{detail.periodDateRange.start} ~ {detail.periodDateRange.end}）
+              </p>
+            </div>
+            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+              detail.targetType === 'dish' ? 'bg-primary-100 text-primary-700' : 'bg-blue-100 text-blue-700'
+            }`}>
+              {detail.targetType === 'dish' ? '菜品' : '食材'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-white rounded-lg p-3 border border-gray-200">
+              <p className="text-xs text-gray-500">理论成本</p>
+              <p className="text-lg font-bold text-gray-700 mt-1">{formatMoney(detail.theoreticalCost)}</p>
+            </div>
+            <div className="bg-white rounded-lg p-3 border border-gray-200">
+              <p className="text-xs text-gray-500">实际成本</p>
+              <p className="text-lg font-bold text-warning-600 mt-1">{formatMoney(detail.actualCost)}</p>
+            </div>
+            <div className="bg-white rounded-lg p-3 border border-gray-200">
+              <p className="text-xs text-gray-500">偏差金额</p>
+              <p className={`text-lg font-bold mt-1 ${
+                detail.deviation > 0 ? 'text-danger-600' : detail.deviation < 0 ? 'text-success-600' : 'text-gray-500'
+              }`}>
+                {detail.deviation > 0 ? '+' : ''}{formatMoney(detail.deviation)}
+              </p>
+            </div>
+            <div className="bg-white rounded-lg p-3 border border-gray-200">
+              <p className="text-xs text-gray-500">偏差率</p>
+              <p className={`text-lg font-bold mt-1 ${
+                detail.deviationRate > 5 ? 'text-danger-600' : 'text-warning-600'
+              }`}>
+                {detail.deviationRate > 0 ? '+' : ''}{formatPercent(detail.deviationRate)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex border-b border-gray-200 mb-4">
+            {(['sale', 'purchase', 'inventory_check'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  activeTab === tab
+                    ? 'text-primary-600 border-b-2 border-primary-600'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {tabLabels[tab]}
+                <span className="ml-1 text-xs text-gray-400">
+                  ({detail.sourceRecords.filter((r) => r.type === tab).length})
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">日期</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">单据号</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">说明</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">金额</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">影响项</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredRecords.map((record, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50">
+                    <td className="px-4 py-2 text-gray-700">{record.date}</td>
+                    <td className="px-4 py-2 text-gray-500 font-mono text-xs">{record.id}</td>
+                    <td className="px-4 py-2 text-gray-700">{record.description}</td>
+                    <td className={`px-4 py-2 text-right font-medium ${
+                      record.amount > 0 ? 'text-danger-600' : record.amount < 0 ? 'text-success-600' : 'text-gray-500'
+                    }`}>
+                      {record.amount > 0 ? '+' : ''}{formatMoney(record.amount)}
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        {record.affectedItems.map((item, i) => (
+                          <span
+                            key={i}
+                            className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded"
+                          >
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filteredRecords.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                      暂无相关{tabLabels[activeTab]}记录
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function GrossProfit() {
-  const [timeDimension, setTimeDimension] = useState<TimeDimension>('day');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  const queryParams = useMemo(() => parseQuery(location.search), [location.search]);
+  const initialDim = (['day', 'week', 'month'].includes(queryParams.dim) ? queryParams.dim : 'day') as TimeDimension;
+  const [timeDimension, setTimeDimension] = useState<TimeDimension>(initialDim);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<DeviationDetail | null>(null);
+  const [drillModalOpen, setDrillModalOpen] = useState(false);
+  const [selectedDrillDetail, setSelectedDrillDetail] = useState<DrillDetail | null>(null);
+
+  const highlightDate = queryParams.date as string | undefined;
+  const highlightHighDeviation = queryParams.type === 'high_deviation';
+  const fromYesterdayCompare = queryParams.from === 'yesterday_compare';
+
+  useEffect(() => {
+    if (queryParams.dim && ['day', 'week', 'month'].includes(queryParams.dim)) {
+      setTimeDimension(queryParams.dim as TimeDimension);
+    }
+  }, [queryParams.dim]);
 
   const sales = useSaleStore((state) => state.sales);
   const purchases = usePurchaseStore((state) => state.purchases);
@@ -201,9 +388,26 @@ export default function GrossProfit() {
     );
   }, [sales, purchases, inventoryChecks, ingredients, dishes, timeDimension]);
 
+  useEffect(() => {
+    if (highlightDate && tableRef.current) {
+      setTimeout(() => {
+        const rows = tableRef.current?.querySelectorAll('tbody tr');
+        rows?.forEach((row) => {
+          const dateCell = row.querySelector('td:first-child');
+          if (dateCell?.textContent?.includes(highlightDate.slice(5))) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        });
+      }, 100);
+    }
+  }, [highlightDate, data]);
+
   const totalRevenue = data.reduce((sum, item) => sum + item.revenue, 0);
   const totalTheoreticalCost = data.reduce((sum, item) => sum + item.theoreticalCost, 0);
   const totalActualCost = data.reduce((sum, item) => sum + item.actualCost, 0);
+  const totalSalesActualCost = data.reduce((sum, item) => sum + item.salesActualCost, 0);
+  const totalPurchaseAmount = data.reduce((sum, item) => sum + item.purchaseAmount, 0);
+  const totalInventoryDiff = data.reduce((sum, item) => sum + item.inventoryDiff, 0);
   const totalGrossProfit = calcGrossProfit(totalRevenue, totalActualCost);
   const totalGrossProfitRate = calcGrossProfitRate(totalRevenue, totalActualCost);
   const totalDeviationRate = calcDeviationRate(totalTheoreticalCost, totalActualCost);
@@ -216,6 +420,18 @@ export default function GrossProfit() {
     );
     setSelectedDetail(detail);
     setDetailModalOpen(true);
+  };
+
+  const handleDrill = (targetId: string, targetType: 'dish' | 'ingredient') => {
+    if (!selectedDetail) return;
+    const drillDetail = generateDrillDetail(
+      { sales, purchases, inventoryChecks, ingredients, dishes },
+      targetId,
+      targetType,
+      selectedDetail.periodDateRange
+    );
+    setSelectedDrillDetail(drillDetail);
+    setDrillModalOpen(true);
   };
 
   return (
@@ -254,7 +470,7 @@ export default function GrossProfit() {
           value={formatMoney(totalActualCost)}
           icon={<TrendingDown className="w-5 h-5" />}
           color="bg-warning-500"
-          subValue={`理论 ${formatMoney(totalTheoreticalCost)}`}
+          subValue={`销售 ${formatMoney(totalSalesActualCost)} + 采购 ${formatMoney(totalPurchaseAmount)} + 盘差 ${formatMoney(totalInventoryDiff)}`}
         />
         <SummaryCard
           title="毛利额"
@@ -346,7 +562,7 @@ export default function GrossProfit() {
           <p className="text-sm text-gray-500">点击行查看偏差明细</p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full" ref={tableRef}>
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -357,6 +573,15 @@ export default function GrossProfit() {
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   理论成本
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  销售成本
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  采购入库
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  盘点差异
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   实际成本
@@ -376,20 +601,38 @@ export default function GrossProfit() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {data.map((item, index) => (
-                <tr
-                  key={index}
-                  className="hover:bg-gray-50 transition-colors cursor-pointer"
-                  onClick={() => handleViewDetail(item)}
-                >
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                    {item.date}
-                  </td>
+              {data.map((item, index) => {
+                const isDateMatch = highlightDate && item.date.includes(highlightDate.slice(5));
+                const isHighDeviation = highlightHighDeviation && Math.abs(item.deviationRate) > 5;
+                return (
+                  <tr
+                    key={index}
+                    className={cn(
+                      'hover:bg-gray-50 transition-colors cursor-pointer',
+                      isDateMatch && 'bg-primary-50/80 border-l-4 border-l-primary-500',
+                      isHighDeviation && 'bg-danger-50/50'
+                    )}
+                    onClick={() => handleViewDetail(item)}
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                      <span className={cn(isDateMatch && 'font-semibold text-primary-700')}>
+                        {item.date}
+                      </span>
+                    </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-700">
                     {formatMoney(item.revenue)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
                     {formatMoney(item.theoreticalCost)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
+                    {formatMoney(item.salesActualCost)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
+                    {formatMoney(item.purchaseAmount)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
+                    {formatMoney(item.inventoryDiff)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-warning-600">
                     {formatMoney(item.actualCost)}
@@ -401,9 +644,14 @@ export default function GrossProfit() {
                     {formatPercent(item.grossProfitRate)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                    <span className={`font-medium ${
-                      item.deviationRate > 5 ? 'text-danger-600' : 'text-warning-600'
-                    }`}>
+                    <span className={cn(
+                      'font-medium',
+                      isHighDeviation && Math.abs(item.deviationRate) > 10
+                        ? 'text-danger-600 text-base animate-pulse'
+                        : item.deviationRate > 5
+                        ? 'text-danger-600'
+                        : 'text-warning-600'
+                    )}>
                       {item.deviationRate > 0 ? '+' : ''}{formatPercent(item.deviationRate)}
                     </span>
                   </td>
@@ -414,10 +662,10 @@ export default function GrossProfit() {
                     </Button>
                   </td>
                 </tr>
-              ))}
+              )})}
               {data.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan={11} className="px-6 py-12 text-center text-gray-400">
                     暂无数据，请先录入采购、销售和盘点记录
                   </td>
                 </tr>
@@ -431,6 +679,13 @@ export default function GrossProfit() {
         isOpen={detailModalOpen}
         onClose={() => setDetailModalOpen(false)}
         detail={selectedDetail}
+        onDrill={handleDrill}
+      />
+
+      <DrillDetailModal
+        isOpen={drillModalOpen}
+        onClose={() => setDrillModalOpen(false)}
+        detail={selectedDrillDetail}
       />
     </div>
   );

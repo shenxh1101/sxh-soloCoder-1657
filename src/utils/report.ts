@@ -13,6 +13,13 @@ import type {
   NegativeStockItem,
   OperationTrackerData,
   AlertItem,
+  CostBreakdown,
+  DrillDetail,
+  DrillSourceItem,
+  DrillSourceType,
+  ReportDataSources,
+  DateRange,
+  PeriodDateRange,
 } from '@/types';
 import {
   calcGrossProfit,
@@ -21,50 +28,7 @@ import {
   calcDishTheoreticalCost,
 } from './calc';
 import { formatDate, isInRange } from './date';
-
-interface ReportDataSources {
-  sales: Sale[];
-  purchases: Purchase[];
-  inventoryChecks: InventoryCheck[];
-  ingredients: Ingredient[];
-  dishes: Dish[];
-}
-
-interface DateRange {
-  start: string;
-  end: string;
-}
-
-interface PeriodDateRange extends DateRange {
-  displayName: string;
-}
-
-interface OperationTrackerData {
-  labels: string[];
-  priceTrend: { name: string; data: number[] }[];
-  topByConsumption: {
-    id: string;
-    name: string;
-    consumption: number;
-    amount: number;
-    unit: string;
-  }[];
-  topByGrossProfit: {
-    id: string;
-    name: string;
-    revenue: number;
-    cost: number;
-    grossProfit: number;
-    rate: number;
-  }[];
-  priceChanges: {
-    id: string;
-    name: string;
-    firstPrice: number;
-    lastPrice: number;
-    changeRate: number;
-  }[];
-}
+import { buildUrl } from './queryParams';
 
 function getDateRange(type: 'day' | 'week' | 'month'): DateRange {
   const today = dayjs();
@@ -136,6 +100,62 @@ function getDataByDateRange<T extends { saleDate?: string; purchaseDate?: string
   });
 }
 
+export function calculateCostBreakdown(
+  sources: ReportDataSources,
+  dateRange: DateRange
+): CostBreakdown {
+  const { sales, purchases, inventoryChecks, ingredients, dishes } = sources;
+  const { start, end } = dateRange;
+
+  const filteredSales = getDataByDateRange(sales, 'saleDate', start, end);
+  const filteredPurchases = getDataByDateRange(purchases, 'purchaseDate', start, end);
+  const filteredChecks = getDataByDateRange(inventoryChecks, 'checkDate', start, end);
+
+  const revenue = filteredSales.reduce((sum, s) => sum + s.totalAmount, 0);
+
+  const salesActualCost = filteredSales.reduce((sum, sale) => {
+    if (typeof sale.totalCost === 'number' && sale.totalCost > 0) {
+      return sum + sale.totalCost;
+    }
+    return sum + sale.items.reduce((itemSum, item) => itemSum + (item.cost || 0), 0);
+  }, 0);
+
+  const purchaseAmount = filteredPurchases.reduce((sum, p) => sum + p.totalAmount, 0);
+
+  const profitAmount = filteredChecks.reduce((sum, c) => sum + (c.profitAmount || 0), 0);
+  const lossAmount = filteredChecks.reduce((sum, c) => sum + (c.lossAmount || 0), 0);
+  const inventoryDiff = lossAmount - profitAmount;
+
+  const totalActualCost = salesActualCost + inventoryDiff;
+
+  const theoreticalCost = filteredSales.reduce((sum, sale) => {
+    return sum + sale.items.reduce((itemSum, saleItem) => {
+      const dish = dishes.find((d) => d.id === saleItem.dishId);
+      if (dish) {
+        const dishCost = calcDishTheoreticalCost(dish, ingredients);
+        return itemSum + dishCost * saleItem.quantity;
+      }
+      return itemSum;
+    }, 0);
+  }, 0);
+
+  const saleCount = filteredSales.length;
+  const purchaseCount = filteredPurchases.length;
+  const checkCount = filteredChecks.length;
+
+  return {
+    salesActualCost: Number(salesActualCost.toFixed(2)),
+    purchaseAmount: Number(purchaseAmount.toFixed(2)),
+    inventoryDiff: Number(inventoryDiff.toFixed(2)),
+    totalActualCost: Number(totalActualCost.toFixed(2)),
+    theoreticalCost: Number(theoreticalCost.toFixed(2)),
+    revenue: Number(revenue.toFixed(2)),
+    saleCount,
+    purchaseCount,
+    checkCount,
+  };
+}
+
 export function generateGrossProfitReport(
   sources: ReportDataSources,
   type: 'day' | 'week' | 'month'
@@ -164,6 +184,7 @@ export function generateGrossProfitReport(
 
   groups.forEach((datesInPeriod, periodKey) => {
     const periodSales = filteredSales.filter((s) => datesInPeriod.includes(s.saleDate!));
+    const periodPurchases = filteredPurchases.filter((p) => datesInPeriod.includes(p.purchaseDate!));
     const periodChecks = filteredChecks.filter((c) => datesInPeriod.includes(c.checkDate!));
 
     const revenue = periodSales.reduce((sum, s) => sum + s.totalAmount, 0);
@@ -186,6 +207,8 @@ export function generateGrossProfitReport(
       return sum + sale.items.reduce((itemSum, item) => itemSum + (item.cost || 0), 0);
     }, 0);
 
+    const purchaseAmount = periodPurchases.reduce((sum, p) => sum + p.totalAmount, 0);
+
     const profitAmount = periodChecks.reduce((sum, c) => sum + (c.profitAmount || 0), 0);
     const lossAmount = periodChecks.reduce((sum, c) => sum + (c.lossAmount || 0), 0);
     const inventoryDiff = lossAmount - profitAmount;
@@ -200,6 +223,9 @@ export function generateGrossProfitReport(
       date: periodKey,
       revenue: Number(revenue.toFixed(2)),
       theoreticalCost: Number(theoreticalCost.toFixed(2)),
+      salesActualCost: Number(salesActualCost.toFixed(2)),
+      purchaseAmount: Number(purchaseAmount.toFixed(2)),
+      inventoryDiff: Number(inventoryDiff.toFixed(2)),
       actualCost: Number(actualCost.toFixed(2)),
       grossProfit,
       grossProfitRate,
@@ -346,7 +372,7 @@ export function generateDeviationDetail(
     })
     .filter(Boolean) as DeviationIngredientItem[];
 
-  return { date: displayName, dishes: dishItems, ingredients: ingredientsList };
+  return { date: displayName, periodDateRange: dateRange, dishes: dishItems, ingredients: ingredientsList };
 }
 
 export function getPeriodDateRange(
@@ -424,18 +450,18 @@ export function generateOperationTrackerData(
   const { sales, purchases, ingredients, dishes } = sources;
   const today = dayjs();
   const startDate = today.subtract(days - 1, 'day');
+  const start = startDate.format('YYYY-MM-DD');
+  const end = today.format('YYYY-MM-DD');
 
   const labels: string[] = [];
   for (let i = days - 1; i >= 0; i--) {
     labels.push(today.subtract(i, 'day').format('MM-DD'));
   }
 
-  const periodPurchases = purchases.filter((p) =>
-    isInRange(p.purchaseDate, startDate.format('YYYY-MM-DD'), today.format('YYYY-MM-DD'))
-  );
-  const periodSales = sales.filter((s) =>
-    isInRange(s.saleDate, startDate.format('YYYY-MM-DD'), today.format('YYYY-MM-DD'))
-  );
+  const periodPurchases = getDataByDateRange(purchases, 'purchaseDate', start, end);
+  const periodSales = getDataByDateRange(sales, 'saleDate', start, end);
+
+  const summary = calculateCostBreakdown(sources, { start, end });
 
   const priceTrend: { name: string; data: number[] }[] = [];
   const topByConsumption: OperationTrackerData['topByConsumption'] = [];
@@ -761,14 +787,16 @@ export function generateAlerts(sources: ReportDataSources): AlertItem[] {
     (ing) => ing.stock < ing.alertThreshold * 1.2 && ing.stock > 0
   ).length;
   if (negativeRiskCount > 0) {
+    const params = { type: 'negative_risk', date: today };
     alerts.push({
       type: 'negative_stock',
       title: '负库存风险预警',
       description: `${negativeRiskCount} 种食材库存接近预警线，建议尽快采购`,
       value: `${negativeRiskCount} 种`,
       level: negativeRiskCount > 3 ? 'danger' : 'warning',
-      targetPath: '/reports/stock-alert',
+      targetPath: buildUrl('/reports/stock-alert', params),
       targetLabel: '查看库存预警',
+      queryParams: params,
     });
   }
 
@@ -781,14 +809,16 @@ export function generateAlerts(sources: ReportDataSources): AlertItem[] {
     .reduce((sum, s) => sum + s.totalAmount, 0);
   const lossRate = todaySaleAmount > 0 ? (todayLoss / todaySaleAmount) * 100 : 0;
   if (lossRate > 3 || todayLoss >= 200) {
+    const params = { date: today, type: 'high_loss' };
     alerts.push({
       type: 'high_loss',
       title: '盘亏金额偏高',
       description: `今日盘亏 ${lossRate.toFixed(1)}%（占销售额比例），建议检查盘点操作或损耗情况`,
       value: `¥${todayLoss.toFixed(2)}`,
       level: lossRate > 5 ? 'danger' : 'warning',
-      targetPath: '/inventory',
+      targetPath: buildUrl('/inventory', params),
       targetLabel: '查看盘点记录',
+      queryParams: params,
     });
   }
 
@@ -810,30 +840,237 @@ export function generateAlerts(sources: ReportDataSources): AlertItem[] {
 
   const gpDrop = yesterdayGpRate - todayGpRate;
   if (todayRev > 0 && yesterdayRev > 500 && gpDrop >= 8) {
+    const params = { dim: 'day', date: today, from: 'yesterday_compare' };
     alerts.push({
       type: 'gp_drop',
       title: '毛利率异常下降',
       description: `今日毛利率 ${todayGpRate.toFixed(1)}%，较昨日下降 ${gpDrop.toFixed(1)}%`,
       value: `${gpDrop.toFixed(1)}% ↓`,
       level: gpDrop > 15 ? 'danger' : 'warning',
-      targetPath: '/reports/gross-profit',
+      targetPath: buildUrl('/reports/gross-profit', params),
       targetLabel: '分析毛利明细',
+      queryParams: params,
     });
   }
 
   const report7 = generateGrossProfitReport(sources, 'day');
   const recentDeviation = report7.length > 0 ? report7[report7.length - 1].deviationRate : 0;
   if (Math.abs(recentDeviation) > 10) {
+    const params = { dim: 'day', date: today, type: 'high_deviation' };
     alerts.push({
       type: 'high_deviation',
       title: '成本偏差率偏高',
       description: `今日成本偏差率 ${recentDeviation.toFixed(1)}%，建议检查 BOM 配方和盘点`,
       value: `${recentDeviation.toFixed(1)}%`,
       level: Math.abs(recentDeviation) > 20 ? 'danger' : 'warning',
-      targetPath: '/reports/gross-profit',
+      targetPath: buildUrl('/reports/gross-profit', params),
       targetLabel: '查看成本偏差',
+      queryParams: params,
     });
   }
 
   return alerts;
+}
+
+export function generateDrillDetail(
+  sources: ReportDataSources,
+  targetId: string,
+  targetType: 'dish' | 'ingredient',
+  periodDateRange: { start: string; end: string; displayName: string }
+): DrillDetail {
+  const { sales, purchases, inventoryChecks, ingredients, dishes } = sources;
+  const { start, end } = periodDateRange;
+
+  let targetName = '';
+  let theoreticalCost = 0;
+  let actualCost = 0;
+  const sourceRecords: DrillSourceItem[] = [];
+
+  const periodSales = sales.filter((s) => isInRange(s.saleDate, start, end));
+  const periodPurchases = purchases.filter((p) => isInRange(p.purchaseDate, start, end));
+  const periodChecks = inventoryChecks.filter((c) => isInRange(c.checkDate, start, end));
+
+  if (targetType === 'dish') {
+    const dish = dishes.find((d) => d.id === targetId);
+    if (!dish) {
+      return {
+        targetId,
+        targetName: '未知菜品',
+        targetType,
+        periodDateRange,
+        theoreticalCost: 0,
+        actualCost: 0,
+        deviation: 0,
+        deviationRate: 0,
+        sourceRecords: [],
+      };
+    }
+    targetName = dish.name;
+
+    const ingredientIds = dish.bomItems.map((b) => b.ingredientId);
+
+    periodSales.forEach((sale) => {
+      const saleItem = sale.items.find((item) => item.dishId === targetId);
+      if (!saleItem) return;
+
+      const dishTheoreticalCost = calcDishTheoreticalCost(dish, ingredients);
+      theoreticalCost += dishTheoreticalCost * saleItem.quantity;
+      actualCost += saleItem.cost;
+
+      sourceRecords.push({
+        type: 'sale',
+        id: sale.id,
+        date: sale.saleDate,
+        amount: saleItem.amount,
+        description: `销售 ${saleItem.quantity} 份「${dish.name}」`,
+        affectedItems: [dish.name],
+      });
+    });
+
+    periodPurchases.forEach((purchase) => {
+      const affectedItems: string[] = [];
+      let totalAmount = 0;
+      purchase.items.forEach((item) => {
+        if (ingredientIds.includes(item.ingredientId)) {
+          affectedItems.push(item.ingredientName);
+          totalAmount += item.amount;
+        }
+      });
+      if (affectedItems.length > 0) {
+        sourceRecords.push({
+          type: 'purchase',
+          id: purchase.id,
+          date: purchase.purchaseDate,
+          amount: totalAmount,
+          description: `采购 ${affectedItems.length} 种相关食材`,
+          affectedItems,
+        });
+      }
+    });
+
+    periodChecks.forEach((check) => {
+      if (check.status !== 'completed') return;
+      const affectedItems: string[] = [];
+      let totalDiffAmount = 0;
+      check.items.forEach((item) => {
+        if (ingredientIds.includes(item.ingredientId)) {
+          affectedItems.push(item.ingredientName);
+          totalDiffAmount += item.diffAmount;
+        }
+      });
+      if (affectedItems.length > 0) {
+        sourceRecords.push({
+          type: 'inventory_check',
+          id: check.id,
+          date: check.checkDate,
+          amount: totalDiffAmount,
+          description: `盘点差异涉及 ${affectedItems.length} 种相关食材`,
+          affectedItems,
+        });
+      }
+    });
+  } else {
+    const ingredient = ingredients.find((i) => i.id === targetId);
+    if (!ingredient) {
+      return {
+        targetId,
+        targetName: '未知食材',
+        targetType,
+        periodDateRange,
+        theoreticalCost: 0,
+        actualCost: 0,
+        deviation: 0,
+        deviationRate: 0,
+        sourceRecords: [],
+      };
+    }
+    targetName = ingredient.name;
+
+    let theoreticalUsage = 0;
+    let actualUsage = 0;
+
+    periodSales.forEach((sale) => {
+      const affectedItems: string[] = [];
+      let saleAmount = 0;
+      sale.items.forEach((saleItem) => {
+        const dish = dishes.find((d) => d.id === saleItem.dishId);
+        if (!dish) return;
+        const bomItem = dish.bomItems.find((b) => b.ingredientId === targetId);
+        if (!bomItem) return;
+
+        const usage = bomItem.dosage * saleItem.quantity;
+        theoreticalUsage += usage;
+        actualUsage += usage;
+        affectedItems.push(dish.name);
+        saleAmount += saleItem.amount;
+
+        const dishTheoreticalCost = calcDishTheoreticalCost(dish, ingredients);
+        const ingredientCostRatio = dishTheoreticalCost > 0
+          ? (bomItem.dosage * ingredient.costPrice) / dishTheoreticalCost
+          : 0;
+        theoreticalCost += dishTheoreticalCost * saleItem.quantity * ingredientCostRatio;
+        actualCost += saleItem.cost * ingredientCostRatio;
+      });
+
+      if (affectedItems.length > 0) {
+        sourceRecords.push({
+          type: 'sale',
+          id: sale.id,
+          date: sale.saleDate,
+          amount: saleAmount,
+          description: `销售涉及「${ingredient.name}」的菜品`,
+          affectedItems,
+        });
+      }
+    });
+
+    periodPurchases.forEach((purchase) => {
+      const purchaseItem = purchase.items.find((item) => item.ingredientId === targetId);
+      if (!purchaseItem) return;
+
+      sourceRecords.push({
+        type: 'purchase',
+        id: purchase.id,
+        date: purchase.purchaseDate,
+        amount: purchaseItem.amount,
+        description: `采购 ${purchaseItem.quantity}${ingredient.unit}「${ingredient.name}」`,
+        affectedItems: [ingredient.name],
+      });
+    });
+
+    periodChecks.forEach((check) => {
+      if (check.status !== 'completed') return;
+      const checkItem = check.items.find((item) => item.ingredientId === targetId);
+      if (!checkItem) return;
+
+      actualUsage -= checkItem.diffQuantity;
+
+      sourceRecords.push({
+        type: 'inventory_check',
+        id: check.id,
+        date: check.checkDate,
+        amount: checkItem.diffAmount,
+        description: `盘点「${ingredient.name}」`,
+        affectedItems: [ingredient.name],
+      });
+    });
+
+    theoreticalCost = Number((theoreticalUsage * ingredient.costPrice).toFixed(2));
+    actualCost = Number((actualUsage * ingredient.costPrice).toFixed(2));
+  }
+
+  const deviation = Number((actualCost - theoreticalCost).toFixed(2));
+  const deviationRate = Number(calcDeviationRate(theoreticalCost, actualCost));
+
+  return {
+    targetId,
+    targetName,
+    targetType,
+    periodDateRange,
+    theoreticalCost: Number(theoreticalCost.toFixed(2)),
+    actualCost: Number(actualCost.toFixed(2)),
+    deviation,
+    deviationRate,
+    sourceRecords,
+  };
 }

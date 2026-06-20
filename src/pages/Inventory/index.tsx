@@ -1,15 +1,17 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Plus, Eye, Calendar, TrendingUp, TrendingDown, CheckCircle, Clock } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Plus, Eye, Calendar, TrendingUp, TrendingDown, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import { useInventoryStore } from '@/store/useInventoryStore';
 import Modal from '@/components/Modal';
 import Button from '@/components/common/Button';
 import { cn } from '@/lib/utils';
 import { formatMoney } from '@/utils/calc';
+import { parseQuery } from '@/utils/queryParams';
 import type { InventoryCheck } from '@/types';
 
 export default function InventoryPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { checks, init: initInventory } = useInventoryStore();
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedCheck, setSelectedCheck] = useState<InventoryCheck | null>(null);
@@ -17,6 +19,15 @@ export default function InventoryPage() {
   useEffect(() => {
     initInventory();
   }, [initInventory]);
+
+  const queryParams = useMemo(() => parseQuery(location.search), [location.search]);
+  const filterDate = queryParams.date as string | undefined;
+  const highlightHighLoss = queryParams.type === 'high_loss';
+
+  const filteredChecks = useMemo(() => {
+    if (!filterDate) return checks;
+    return checks.filter(check => check.checkDate === filterDate);
+  }, [checks, filterDate]);
 
   const openDetail = (check: InventoryCheck) => {
     setSelectedCheck(check);
@@ -42,6 +53,21 @@ export default function InventoryPage() {
 
   return (
     <div className="space-y-6">
+      {filterDate && (
+        <div className="flex items-center gap-3 p-4 bg-primary-50 border border-primary-200 rounded-xl">
+          <AlertTriangle className="w-5 h-5 text-primary-600 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-primary-800">
+              当前筛选：{filterDate} 的盘点记录
+              {highlightHighLoss && <span className="text-danger-600 ml-2">（盘亏偏高提醒）</span>}
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/inventory')}>
+            清除筛选
+          </Button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-gray-800">盘点单列表</h2>
         <Button onClick={() => navigate('/inventory/new')}>
@@ -62,15 +88,21 @@ export default function InventoryPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {checks.length === 0 ? (
+            {filteredChecks.length === 0 ? (
               <tr>
                 <td colSpan={5} className="py-12 text-center text-gray-400">
                   暂无盘点单
                 </td>
               </tr>
             ) : (
-              checks.map(check => (
-                <tr key={check.id} className="hover:bg-gray-50 transition-colors">
+              filteredChecks.map(check => (
+                <tr
+                  key={check.id}
+                  className={cn(
+                    'hover:bg-gray-50 transition-colors',
+                    highlightHighLoss && check.lossAmount > 0 && 'bg-danger-50/50'
+                  )}
+                >
                   <td className="py-4 px-6">
                     <div className="flex items-center gap-2 text-gray-800">
                       <Calendar className="w-4 h-4 text-gray-400" />
@@ -85,9 +117,17 @@ export default function InventoryPage() {
                     </div>
                   </td>
                   <td className="py-4 px-6 text-right">
-                    <div className="flex items-center justify-end gap-1 text-danger-600">
+                    <div className={cn(
+                      'flex items-center justify-end gap-1',
+                      highlightHighLoss && check.lossAmount > 0 ? 'text-danger-600 animate-pulse' : 'text-danger-600'
+                    )}>
                       <TrendingDown className="w-4 h-4" />
-                      <span className="font-semibold">{formatMoney(check.lossAmount)}</span>
+                      <span className={cn(
+                        'font-semibold',
+                        highlightHighLoss && check.lossAmount > 0 && 'text-lg'
+                      )}>
+                        {formatMoney(check.lossAmount)}
+                      </span>
                     </div>
                   </td>
                   <td className="py-4 px-6 text-center">
