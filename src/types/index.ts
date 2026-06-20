@@ -124,3 +124,46 @@ export interface PurchaseSuggestionItem {
   suggestQuantity: number;
   estimatedCost: number;
 }
+
+export interface DeviationDishItem {
+  dishId: string;
+  dishName: string;
+  soldQuantity: number;
+  theoreticalCost: number;
+  actualCost: number;
+  deviation: number;
+  deviationRate: number;
+}
+
+export interface DeviationIngredientItem {
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  theoreticalUsage: number;
+  actualUsage: number;
+  price: number;
+  deviation: number;
+  deviationAmount: number;
+  reason: 'waste' | 'inventory' | 'bom' | 'other';
+}
+
+export interface DeviationDetail {
+  date: string;
+  dishes: DeviationDishItem[];
+  ingredients: DeviationIngredientItem[];
+}
+
+export interface NegativeStockItem {
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  currentStock: number;
+  requiredStock: number;
+  shortfall: number;
+  affectedDishes: string[];
+}
+
+export interface StockCheckResult {
+  hasNegativeStock: boolean;
+  items: NegativeStockItem[];
+}

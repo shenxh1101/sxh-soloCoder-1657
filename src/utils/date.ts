@@ -1,7 +1,9 @@
 import dayjs from 'dayjs';
 import isBetween from 'dayjs/plugin/isBetween';
+import weekOfYear from 'dayjs/plugin/weekOfYear';
 
 dayjs.extend(isBetween);
+dayjs.extend(weekOfYear);
 
 export function formatDate(date: string | Date, format = 'YYYY-MM-DD'): string {
   return dayjs(date).format(format);

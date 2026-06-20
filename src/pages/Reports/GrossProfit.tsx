@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -12,37 +12,20 @@ import {
   ResponsiveContainer,
   ComposedChart,
 } from 'recharts';
-import { TrendingUp, DollarSign, TrendingDown, BarChart3 } from 'lucide-react';
+import { TrendingUp, DollarSign, TrendingDown, BarChart3, ChevronRight, AlertCircle } from 'lucide-react';
 import { formatMoney, formatPercent, calcGrossProfit, calcGrossProfitRate, calcDeviationRate } from '@/utils/calc';
-import type { GrossProfitReportItem } from '@/types';
+import { generateGrossProfitReport, generateDeviationDetail } from '@/utils/report';
+import { useSaleStore } from '@/store/useSaleStore';
+import { usePurchaseStore } from '@/store/usePurchaseStore';
+import { useInventoryStore } from '@/store/useInventoryStore';
+import { useIngredientStore } from '@/store/useIngredientStore';
+import { useDishStore } from '@/store/useDishStore';
+import { formatDate } from '@/utils/date';
+import Modal from '@/components/Modal';
+import Button from '@/components/common/Button';
+import type { GrossProfitReportItem, DeviationDetail } from '@/types';
 
 type TimeDimension = 'day' | 'week' | 'month';
-
-const dailyData: GrossProfitReportItem[] = [
-  { date: '06-15', revenue: 2880, theoreticalCost: 850, actualCost: 892.5, grossProfit: 1987.5, grossProfitRate: 69.01, deviationRate: 5.0 },
-  { date: '06-16', revenue: 3200, theoreticalCost: 950, actualCost: 980, grossProfit: 2220, grossProfitRate: 69.38, deviationRate: 3.16 },
-  { date: '06-17', revenue: 2650, theoreticalCost: 780, actualCost: 820, grossProfit: 1830, grossProfitRate: 69.06, deviationRate: 5.13 },
-  { date: '06-18', revenue: 3100, theoreticalCost: 920, actualCost: 950, grossProfit: 2150, grossProfitRate: 69.35, deviationRate: 3.26 },
-  { date: '06-19', revenue: 3800, theoreticalCost: 1100, actualCost: 1150, grossProfit: 2650, grossProfitRate: 69.74, deviationRate: 4.55 },
-  { date: '06-20', revenue: 4500, theoreticalCost: 1320, actualCost: 1380, grossProfit: 3120, grossProfitRate: 69.33, deviationRate: 4.55 },
-  { date: '06-21', revenue: 4200, theoreticalCost: 1220, actualCost: 1280, grossProfit: 2920, grossProfitRate: 69.52, deviationRate: 4.92 },
-];
-
-const weeklyData: GrossProfitReportItem[] = [
-  { date: '第23周', revenue: 18500, theoreticalCost: 5500, actualCost: 5800, grossProfit: 12700, grossProfitRate: 68.65, deviationRate: 5.45 },
-  { date: '第24周', revenue: 21200, theoreticalCost: 6200, actualCost: 6500, grossProfit: 14700, grossProfitRate: 69.34, deviationRate: 4.84 },
-  { date: '第25周', revenue: 19800, theoreticalCost: 5800, actualCost: 6100, grossProfit: 13700, grossProfitRate: 69.19, deviationRate: 5.17 },
-  { date: '第26周', revenue: 24330, theoreticalCost: 7140, actualCost: 7452.5, grossProfit: 16877.5, grossProfitRate: 69.37, deviationRate: 4.38 },
-];
-
-const monthlyData: GrossProfitReportItem[] = [
-  { date: '1月', revenue: 78500, theoreticalCost: 23500, actualCost: 24800, grossProfit: 53700, grossProfitRate: 68.41, deviationRate: 5.53 },
-  { date: '2月', revenue: 65200, theoreticalCost: 19500, actualCost: 20600, grossProfit: 44600, grossProfitRate: 68.40, deviationRate: 5.64 },
-  { date: '3月', revenue: 82300, theoreticalCost: 24800, actualCost: 26100, grossProfit: 56200, grossProfitRate: 68.29, deviationRate: 5.24 },
-  { date: '4月', revenue: 88600, theoreticalCost: 26500, actualCost: 27800, grossProfit: 60800, grossProfitRate: 68.62, deviationRate: 4.91 },
-  { date: '5月', revenue: 92100, theoreticalCost: 27800, actualCost: 29100, grossProfit: 63000, grossProfitRate: 68.40, deviationRate: 4.68 },
-  { date: '6月', revenue: 85400, theoreticalCost: 25600, actualCost: 26800, grossProfit: 58600, grossProfitRate: 68.62, deviationRate: 4.69 },
-];
 
 function SummaryCard({ title, value, icon, color, subValue }: {
   title: string;
@@ -69,23 +52,154 @@ function SummaryCard({ title, value, icon, color, subValue }: {
   );
 }
 
-export default function GrossProfit() {
-  const [timeDimension, setTimeDimension] = useState<TimeDimension>('day');
+function DeviationDetailModal({
+  isOpen,
+  onClose,
+  detail,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  detail: DeviationDetail | null;
+}) {
+  if (!detail) return null;
 
-  const getData = () => {
-    switch (timeDimension) {
-      case 'day':
-        return dailyData;
-      case 'week':
-        return weeklyData;
-      case 'month':
-        return monthlyData;
-      default:
-        return dailyData;
-    }
+  const reasonLabels: Record<string, string> = {
+    waste: '损耗',
+    inventory: '盘点差异',
+    bom: 'BOM用量不准',
+    other: '其他',
   };
 
-  const data = getData();
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={`偏差明细 - ${formatDate(detail.date)}`} size="xl">
+      <div className="space-y-6">
+        <div>
+          <h4 className="text-sm font-semibold text-gray-700 mb-3">菜品维度偏差</h4>
+          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">菜品名称</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">销售数量</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">理论成本</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">实际成本</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">偏差金额</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">偏差率</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {detail.dishes.map((dish, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50">
+                    <td className="px-4 py-2 text-gray-700">{dish.dishName}</td>
+                    <td className="px-4 py-2 text-right text-gray-700">{dish.soldQuantity}</td>
+                    <td className="px-4 py-2 text-right text-gray-500">{formatMoney(dish.theoreticalCost)}</td>
+                    <td className="px-4 py-2 text-right text-warning-600">{formatMoney(dish.actualCost)}</td>
+                    <td className={`px-4 py-2 text-right font-medium ${dish.deviation > 0 ? 'text-danger-600' : dish.deviation < 0 ? 'text-success-600' : 'text-gray-500'}`}>
+                      {dish.deviation > 0 ? '+' : ''}{formatMoney(dish.deviation)}
+                    </td>
+                    <td className={`px-4 py-2 text-right font-medium ${dish.deviationRate > 5 ? 'text-danger-600' : 'text-warning-600'}`}>
+                      {dish.deviationRate > 0 ? '+' : ''}{formatPercent(dish.deviationRate)}
+                    </td>
+                  </tr>
+                ))}
+                {detail.dishes.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                      暂无数据
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-sm font-semibold text-gray-700 mb-3">食材维度偏差</h4>
+          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">食材名称</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">理论用量</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">实际用量</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">偏差数量</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">偏差金额</th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">原因分析</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {detail.ingredients.map((ing, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50">
+                    <td className="px-4 py-2 text-gray-700">{ing.ingredientName}</td>
+                    <td className="px-4 py-2 text-right text-gray-500">{ing.theoreticalUsage}{ing.unit}</td>
+                    <td className="px-4 py-2 text-right text-gray-700">{ing.actualUsage}{ing.unit}</td>
+                    <td className={`px-4 py-2 text-right font-medium ${ing.deviation > 0 ? 'text-danger-600' : ing.deviation < 0 ? 'text-success-600' : 'text-gray-500'}`}>
+                      {ing.deviation > 0 ? '+' : ''}{ing.deviation.toFixed(2)}{ing.unit}
+                    </td>
+                    <td className={`px-4 py-2 text-right font-medium ${ing.deviationAmount > 0 ? 'text-danger-600' : ing.deviationAmount < 0 ? 'text-success-600' : 'text-gray-500'}`}>
+                      {ing.deviationAmount > 0 ? '+' : ''}{formatMoney(ing.deviationAmount)}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <span className={`px-2 py-0.5 text-xs rounded-full ${
+                        ing.reason === 'waste' ? 'bg-warning-100 text-warning-700' :
+                        ing.reason === 'inventory' ? 'bg-blue-100 text-blue-700' :
+                        ing.reason === 'bom' ? 'bg-danger-100 text-danger-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {reasonLabels[ing.reason]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {detail.ingredients.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                      暂无数据
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-yellow-800">
+              <p className="font-medium">偏差原因说明</p>
+              <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                <li><strong>损耗</strong>：食材正常损耗或浪费，偏差率5%-15%</li>
+                <li><strong>盘点差异</strong>：盘点导致的库存调整，偏差量较小</li>
+                <li><strong>BOM用量不准</strong>：菜品配方与实际用量不符，偏差率大于30%</li>
+                <li><strong>其他</strong>：无法归类的其他原因</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+export default function GrossProfit() {
+  const [timeDimension, setTimeDimension] = useState<TimeDimension>('day');
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedDetail, setSelectedDetail] = useState<DeviationDetail | null>(null);
+
+  const sales = useSaleStore((state) => state.sales);
+  const purchases = usePurchaseStore((state) => state.purchases);
+  const inventoryChecks = useInventoryStore((state) => state.checks);
+  const ingredients = useIngredientStore((state) => state.ingredients);
+  const dishes = useDishStore((state) => state.dishes);
+
+  const data = useMemo<GrossProfitReportItem[]>(() => {
+    return generateGrossProfitReport(
+      { sales, purchases, inventoryChecks, ingredients, dishes },
+      timeDimension
+    );
+  }, [sales, purchases, inventoryChecks, ingredients, dishes, timeDimension]);
 
   const totalRevenue = data.reduce((sum, item) => sum + item.revenue, 0);
   const totalTheoreticalCost = data.reduce((sum, item) => sum + item.theoreticalCost, 0);
@@ -93,6 +207,15 @@ export default function GrossProfit() {
   const totalGrossProfit = calcGrossProfit(totalRevenue, totalActualCost);
   const totalGrossProfitRate = calcGrossProfitRate(totalRevenue, totalActualCost);
   const totalDeviationRate = calcDeviationRate(totalTheoreticalCost, totalActualCost);
+
+  const handleViewDetail = (item: GrossProfitReportItem) => {
+    const detail = generateDeviationDetail(
+      { sales, purchases, inventoryChecks, ingredients, dishes },
+      item.date
+    );
+    setSelectedDetail(detail);
+    setDetailModalOpen(true);
+  };
 
   return (
     <div className="space-y-6">
@@ -112,6 +235,9 @@ export default function GrossProfit() {
             </button>
           ))}
         </div>
+        <p className="text-sm text-gray-500">
+          数据根据销售记录、采购记录和盘点自动计算，实时更新
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -120,12 +246,14 @@ export default function GrossProfit() {
           value={formatMoney(totalRevenue)}
           icon={<DollarSign className="w-5 h-5" />}
           color="bg-primary-500"
+          subValue={`${data.length}个周期`}
         />
         <SummaryCard
           title="总成本"
           value={formatMoney(totalActualCost)}
           icon={<TrendingDown className="w-5 h-5" />}
           color="bg-warning-500"
+          subValue={`理论 ${formatMoney(totalTheoreticalCost)}`}
         />
         <SummaryCard
           title="毛利额"
@@ -143,7 +271,8 @@ export default function GrossProfit() {
           title="成本偏差率"
           value={formatPercent(totalDeviationRate)}
           icon={<TrendingUp className="w-5 h-5" />}
-          color="bg-danger-500"
+          color={totalDeviationRate > 5 ? 'bg-danger-500' : 'bg-warning-500'}
+          subValue={totalDeviationRate > 5 ? '偏差偏高' : '正常范围'}
         />
       </div>
 
@@ -211,8 +340,9 @@ export default function GrossProfit() {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-gray-800">明细数据</h3>
+          <p className="text-sm text-gray-500">点击行查看偏差明细</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -239,11 +369,18 @@ export default function GrossProfit() {
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   偏差率
                 </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  操作
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {data.map((item, index) => (
-                <tr key={index} className="hover:bg-gray-50 transition-colors">
+                <tr
+                  key={index}
+                  className="hover:bg-gray-50 transition-colors cursor-pointer"
+                  onClick={() => handleViewDetail(item)}
+                >
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                     {item.date}
                   </td>
@@ -269,12 +406,31 @@ export default function GrossProfit() {
                       {item.deviationRate > 0 ? '+' : ''}{formatPercent(item.deviationRate)}
                     </span>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                    <Button variant="ghost" size="sm" className="text-primary-600 hover:text-primary-700">
+                      查看明细
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </td>
                 </tr>
               ))}
+              {data.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-6 py-12 text-center text-gray-400">
+                    暂无数据，请先录入采购、销售和盘点记录
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      <DeviationDetailModal
+        isOpen={detailModalOpen}
+        onClose={() => setDetailModalOpen(false)}
+        detail={selectedDetail}
+      />
     </div>
   );
 }

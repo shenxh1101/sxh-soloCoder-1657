@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Warehouse,
@@ -24,19 +24,11 @@ import {
 import { useIngredientStore } from '@/store/useIngredientStore';
 import { usePurchaseStore } from '@/store/usePurchaseStore';
 import { useSaleStore } from '@/store/useSaleStore';
-import { formatMoney, formatPercent } from '@/utils/calc';
-import { getToday, formatDate } from '@/utils/date';
+import { useDishStore } from '@/store/useDishStore';
+import { formatMoney, formatPercent, calcGrossProfitRate, calcGrossProfit } from '@/utils/calc';
+import { generateDailyTrendData } from '@/utils/report';
+import { getToday } from '@/utils/date';
 import Button from '@/components/common/Button';
-
-const mockTrendData = [
-  { date: '周一', revenue: 2880, cost: 892.5, grossProfit: 1987.5 },
-  { date: '周二', revenue: 3200, cost: 980, grossProfit: 2220 },
-  { date: '周三', revenue: 2650, cost: 820, grossProfit: 1830 },
-  { date: '周四', revenue: 3100, cost: 950, grossProfit: 2150 },
-  { date: '周五', revenue: 3800, cost: 1150, grossProfit: 2650 },
-  { date: '周六', revenue: 4500, cost: 1380, grossProfit: 3120 },
-  { date: '周日', revenue: 4200, cost: 1280, grossProfit: 2920 },
-];
 
 interface StatCardProps {
   title: string;
@@ -92,14 +84,30 @@ function QuickAction({ icon, label, onClick, color }: QuickActionProps) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { getTotalStockValue, getAlertIngredients } = useIngredientStore();
-  const { getTotalPurchaseAmountByDate } = usePurchaseStore();
-  const { getTotalRevenueByDate } = useSaleStore();
+  const { ingredients, getTotalStockValue, getAlertIngredients } = useIngredientStore();
+  const { purchases, getTotalPurchaseAmountByDate } = usePurchaseStore();
+  const { sales, getTotalRevenueByDate } = useSaleStore();
+  const { dishes } = useDishStore();
 
   const totalStockValue = getTotalStockValue();
   const todayPurchase = getTotalPurchaseAmountByDate(getToday());
   const todayRevenue = getTotalRevenueByDate(getToday());
   const alertIngredients = getAlertIngredients();
+
+  const trendData = useMemo(() => {
+    return generateDailyTrendData({
+      sales,
+      purchases,
+      inventoryChecks: [],
+      ingredients,
+      dishes,
+    });
+  }, [sales, purchases, ingredients, dishes]);
+
+  const weekRevenue = trendData.reduce((sum, d) => sum + d.revenue, 0);
+  const weekCost = trendData.reduce((sum, d) => sum + d.cost, 0);
+  const weekGrossProfit = calcGrossProfit(weekRevenue, weekCost);
+  const weekGrossProfitRate = calcGrossProfitRate(weekRevenue, weekCost);
 
   const handleGenerateSuggestion = () => {
     navigate('/reports/purchase-suggestion');
@@ -112,7 +120,7 @@ export default function Dashboard() {
           title="库存总金额"
           value={formatMoney(totalStockValue)}
           icon={<Warehouse className="w-6 h-6" />}
-          change={5.2}
+          change={0}
           gradient="bg-gradient-to-br from-primary-500 to-primary-700"
           iconBg="bg-white/20"
         />
@@ -120,7 +128,7 @@ export default function Dashboard() {
           title="今日采购金额"
           value={formatMoney(todayPurchase)}
           icon={<ShoppingCart className="w-6 h-6" />}
-          change={-3.8}
+          change={0}
           gradient="bg-gradient-to-br from-blue-500 to-blue-700"
           iconBg="bg-white/20"
         />
@@ -128,7 +136,7 @@ export default function Dashboard() {
           title="今日销售额"
           value={formatMoney(todayRevenue)}
           icon={<DollarSign className="w-6 h-6" />}
-          change={12.5}
+          change={0}
           gradient="bg-gradient-to-br from-success-500 to-success-700"
           iconBg="bg-white/20"
         />
@@ -142,15 +150,29 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-semibold text-gray-800">毛利趋势</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-800">本周经营概览</h3>
             <span className="text-sm text-gray-500">最近7天</span>
           </div>
-          <div className="h-72">
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="text-center">
+              <p className="text-sm text-gray-500">总收入</p>
+              <p className="text-xl font-bold text-primary-600">{formatMoney(weekRevenue)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm text-gray-500">总成本</p>
+              <p className="text-xl font-bold text-warning-600">{formatMoney(weekCost)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-sm text-gray-500">毛利率</p>
+              <p className="text-xl font-bold text-success-600">{formatPercent(weekGrossProfitRate)}</p>
+            </div>
+          </div>
+          <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={mockTrendData}>
+              <AreaChart data={trendData}>
                 <defs>
                   <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#0d9488" stopOpacity={0.3} />
@@ -209,7 +231,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-800">库存预警</h3>
             <span className="px-2 py-0.5 bg-danger-100 text-danger-600 text-xs font-medium rounded-full">
@@ -264,6 +286,58 @@ export default function Dashboard() {
               一键生成采购建议
             </Button>
           )}
+        </div>
+
+        <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-800">今日数据</h3>
+          </div>
+          <div className="space-y-4">
+            <div className="p-4 bg-gradient-to-r from-primary-50 to-primary-100 rounded-lg border border-primary-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-primary-700">今日销售额</p>
+                  <p className="text-xl font-bold text-primary-700 mt-1">{formatMoney(todayRevenue)}</p>
+                </div>
+                <div className="w-10 h-10 rounded-lg bg-primary-500 flex items-center justify-center">
+                  <DollarSign className="w-5 h-5 text-white" />
+                </div>
+              </div>
+              <p className="text-xs text-primary-600 mt-2">
+                共 {sales.filter(s => s.saleDate === getToday()).length} 笔销售记录
+              </p>
+            </div>
+
+            <div className="p-4 bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg border border-blue-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-blue-700">今日采购</p>
+                  <p className="text-xl font-bold text-blue-700 mt-1">{formatMoney(todayPurchase)}</p>
+                </div>
+                <div className="w-10 h-10 rounded-lg bg-blue-500 flex items-center justify-center">
+                  <ShoppingCart className="w-5 h-5 text-white" />
+                </div>
+              </div>
+              <p className="text-xs text-blue-600 mt-2">
+                共 {purchases.filter(p => p.purchaseDate === getToday()).length} 笔采购记录
+              </p>
+            </div>
+
+            <div className="p-4 bg-gradient-to-r from-success-50 to-success-100 rounded-lg border border-success-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-success-700">本周毛利</p>
+                  <p className="text-xl font-bold text-success-700 mt-1">{formatMoney(weekGrossProfit)}</p>
+                </div>
+                <div className="w-10 h-10 rounded-lg bg-success-500 flex items-center justify-center">
+                  <TrendingUp className="w-5 h-5 text-white" />
+                </div>
+              </div>
+              <p className="text-xs text-success-600 mt-2">
+                毛利率 {formatPercent(weekGrossProfitRate)}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
