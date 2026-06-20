@@ -13,6 +13,7 @@ import Sales from '@/pages/Sales';
 import GrossProfitReport from '@/pages/Reports/GrossProfit';
 import StockAlertReport from '@/pages/Reports/StockAlert';
 import PurchaseSuggestionReport from '@/pages/Reports/PurchaseSuggestion';
+import OperationTrackerReport from '@/pages/Reports/OperationTracker';
 import { useIngredientStore } from '@/store/useIngredientStore';
 import { useSupplierStore } from '@/store/useSupplierStore';
 import { usePurchaseStore } from '@/store/usePurchaseStore';
@@ -53,6 +54,7 @@ export default function App() {
           <Route path="/reports/gross-profit" element={<GrossProfitReport />} />
           <Route path="/reports/stock-alert" element={<StockAlertReport />} />
           <Route path="/reports/purchase-suggestion" element={<PurchaseSuggestionReport />} />
+          <Route path="/reports/operation-tracker" element={<OperationTrackerReport />} />
         </Routes>
       </Layout>
     </Router>

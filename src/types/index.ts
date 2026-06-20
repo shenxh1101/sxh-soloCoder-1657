@@ -167,3 +167,48 @@ export interface StockCheckResult {
   hasNegativeStock: boolean;
   items: NegativeStockItem[];
 }
+
+export interface PriceChangeItem {
+  id: string;
+  name: string;
+  firstPrice: number;
+  lastPrice: number;
+  changeRate: number;
+}
+
+export interface ConsumptionRankItem {
+  id: string;
+  name: string;
+  consumption: number;
+  amount: number;
+  unit: string;
+}
+
+export interface GrossProfitRankItem {
+  id: string;
+  name: string;
+  revenue: number;
+  cost: number;
+  grossProfit: number;
+  rate: number;
+}
+
+export interface OperationTrackerData {
+  labels: string[];
+  priceTrend: { name: string; data: number[] }[];
+  topByConsumption: ConsumptionRankItem[];
+  topByGrossProfit: GrossProfitRankItem[];
+  priceChanges: PriceChangeItem[];
+}
+
+export type AlertType = 'negative_stock' | 'high_loss' | 'gp_drop' | 'high_deviation';
+
+export interface AlertItem {
+  type: AlertType;
+  title: string;
+  description: string;
+  value?: string;
+  level: 'warning' | 'danger';
+  targetPath: string;
+  targetLabel: string;
+}

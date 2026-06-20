@@ -11,6 +11,9 @@ import {
   ClipboardList,
   Receipt,
   Package,
+  ExternalLink,
+  AlertOctagon,
+  AlertCircle,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -25,10 +28,12 @@ import { useIngredientStore } from '@/store/useIngredientStore';
 import { usePurchaseStore } from '@/store/usePurchaseStore';
 import { useSaleStore } from '@/store/useSaleStore';
 import { useDishStore } from '@/store/useDishStore';
+import { useInventoryStore } from '@/store/useInventoryStore';
 import { formatMoney, formatPercent, calcGrossProfitRate, calcGrossProfit } from '@/utils/calc';
-import { generateDailyTrendData } from '@/utils/report';
+import { generateDailyTrendData, generateAlerts } from '@/utils/report';
 import { getToday } from '@/utils/date';
 import Button from '@/components/common/Button';
+import type { AlertItem } from '@/types';
 
 interface StatCardProps {
   title: string;
@@ -82,12 +87,60 @@ function QuickAction({ icon, label, onClick, color }: QuickActionProps) {
   );
 }
 
+function AlertCard({ alert, onClick }: { alert: AlertItem; onClick: () => void }) {
+  const isDanger = alert.level === 'danger';
+  const Icon = isDanger ? AlertOctagon : AlertCircle;
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left p-4 rounded-xl border transition-all hover:shadow-md ${
+        isDanger
+          ? 'bg-danger-50 border-danger-200 hover:border-danger-300'
+          : 'bg-warning-50 border-warning-200 hover:border-warning-300'
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
+          isDanger ? 'bg-danger-500 text-white' : 'bg-warning-500 text-white'
+        }`}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className={`font-semibold ${isDanger ? 'text-danger-800' : 'text-warning-800'}`}>
+              {alert.title}
+            </h4>
+            {alert.value && (
+              <span className={`text-sm font-bold whitespace-nowrap ${
+                isDanger ? 'text-danger-600' : 'text-warning-600'
+              }`}>
+                {alert.value}
+              </span>
+            )}
+          </div>
+          <p className={`text-sm mt-1 ${isDanger ? 'text-danger-700' : 'text-warning-700'}`}>
+            {alert.description}
+          </p>
+          <div className={`mt-2 flex items-center gap-1 text-xs font-medium ${
+            isDanger ? 'text-danger-600' : 'text-warning-600'
+          }`}>
+            <span>{alert.targetLabel}</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { ingredients, getTotalStockValue, getAlertIngredients } = useIngredientStore();
   const { purchases, getTotalPurchaseAmountByDate } = usePurchaseStore();
   const { sales, getTotalRevenueByDate } = useSaleStore();
   const { dishes } = useDishStore();
+  const { checks: inventoryChecks } = useInventoryStore();
 
   const totalStockValue = getTotalStockValue();
   const todayPurchase = getTotalPurchaseAmountByDate(getToday());
@@ -98,11 +151,21 @@ export default function Dashboard() {
     return generateDailyTrendData({
       sales,
       purchases,
-      inventoryChecks: [],
+      inventoryChecks,
       ingredients,
       dishes,
     });
-  }, [sales, purchases, ingredients, dishes]);
+  }, [sales, purchases, inventoryChecks, ingredients, dishes]);
+
+  const alerts = useMemo(() => {
+    return generateAlerts({
+      sales,
+      purchases,
+      inventoryChecks,
+      ingredients,
+      dishes,
+    });
+  }, [sales, purchases, inventoryChecks, ingredients, dishes]);
 
   const weekRevenue = trendData.reduce((sum, d) => sum + d.revenue, 0);
   const weekCost = trendData.reduce((sum, d) => sum + d.cost, 0);
@@ -111,6 +174,10 @@ export default function Dashboard() {
 
   const handleGenerateSuggestion = () => {
     navigate('/reports/purchase-suggestion');
+  };
+
+  const handleAlertClick = (alert: AlertItem) => {
+    navigate(alert.targetPath);
   };
 
   return (
@@ -149,6 +216,25 @@ export default function Dashboard() {
           iconBg="bg-white/20"
         />
       </div>
+
+      {alerts.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-warning-600" />
+              <h3 className="text-lg font-semibold text-gray-800">异常提醒</h3>
+              <span className="px-2 py-0.5 bg-warning-100 text-warning-700 text-xs font-medium rounded-full">
+                {alerts.length} 条
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {alerts.map((alert, idx) => (
+              <AlertCard key={idx} alert={alert} onClick={() => handleAlertClick(alert)} />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-6">

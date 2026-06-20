@@ -14,6 +14,7 @@ import {
   Package,
   TrendingUp,
   AlertTriangle,
+  LineChart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -48,6 +49,7 @@ const menuItems = [
   {
     group: '报表中心',
     items: [
+      { path: '/reports/operation-tracker', label: '经营数据追踪', icon: LineChart },
       { path: '/reports/gross-profit', label: '毛利分析', icon: TrendingUp },
       { path: '/reports/stock-alert', label: '库存预警', icon: AlertTriangle },
       { path: '/reports/purchase-suggestion', label: '采购建议', icon: Package },

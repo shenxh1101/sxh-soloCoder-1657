@@ -14,13 +14,13 @@ import {
 } from 'recharts';
 import { TrendingUp, DollarSign, TrendingDown, BarChart3, ChevronRight, AlertCircle } from 'lucide-react';
 import { formatMoney, formatPercent, calcGrossProfit, calcGrossProfitRate, calcDeviationRate } from '@/utils/calc';
-import { generateGrossProfitReport, generateDeviationDetail } from '@/utils/report';
+import { generateGrossProfitReport, generateDeviationDetail, getPeriodDateRange } from '@/utils/report';
 import { useSaleStore } from '@/store/useSaleStore';
 import { usePurchaseStore } from '@/store/usePurchaseStore';
 import { useInventoryStore } from '@/store/useInventoryStore';
 import { useIngredientStore } from '@/store/useIngredientStore';
 import { useDishStore } from '@/store/useDishStore';
-import { formatDate } from '@/utils/date';
+
 import Modal from '@/components/Modal';
 import Button from '@/components/common/Button';
 import type { GrossProfitReportItem, DeviationDetail } from '@/types';
@@ -71,7 +71,7 @@ function DeviationDetailModal({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`偏差明细 - ${formatDate(detail.date)}`} size="xl">
+    <Modal isOpen={isOpen} onClose={onClose} title={`偏差明细 - ${detail.date}`} size="xl">
       <div className="space-y-6">
         <div>
           <h4 className="text-sm font-semibold text-gray-700 mb-3">菜品维度偏差</h4>
@@ -209,9 +209,10 @@ export default function GrossProfit() {
   const totalDeviationRate = calcDeviationRate(totalTheoreticalCost, totalActualCost);
 
   const handleViewDetail = (item: GrossProfitReportItem) => {
+    const dateRange = getPeriodDateRange(timeDimension, item.date);
     const detail = generateDeviationDetail(
       { sales, purchases, inventoryChecks, ingredients, dishes },
-      item.date
+      dateRange
     );
     setSelectedDetail(detail);
     setDetailModalOpen(true);
